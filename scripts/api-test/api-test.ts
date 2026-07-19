@@ -3,7 +3,7 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 /**
  * Automated API smoke test for the EstateFlow CRM backend.
  *
- * Runs the full happy-path flow (register -> login -> properties -> clients -> leads)
+ * Runs the full happy-path flow (register -> login -> properties -> clients -> leads -> visits)
  * against a running instance and exits non-zero if any step fails.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
@@ -46,6 +46,12 @@ const testLead = {
   source: 'FACEBOOK',
   status: 'NEW',
   notes: 'Interested in apartment',
+};
+
+// Visit reuses the created clientId/propertyId, so only the static fields live here.
+const testVisit = {
+  visitDate: '2026-07-25T10:00:00.000Z',
+  notes: 'Customer wants to see the apartment',
 };
 
 // Simple console helpers
@@ -261,6 +267,101 @@ async function run(): Promise<void> {
     )}`,
   );
   pass('Lead deleted');
+
+  // 14. Create visit (reuses the property and client created earlier)
+  const createVisitRes = await client.post(
+    '/visits',
+    { clientId, propertyId, ...testVisit },
+    { headers: authHeaders },
+  );
+  assert(
+    createVisitRes.status === 201,
+    `Create visit failed: POST /visits -> HTTP ${createVisitRes.status} - ${JSON.stringify(
+      createVisitRes.data,
+    )}`,
+  );
+  const visitId: string | undefined = createVisitRes.data?.data?.id;
+  assert(Boolean(visitId), 'Create visit response did not contain visit data with an id');
+  pass('Visit created');
+
+  // 15. Get all visits and verify the created one is present (paginated: data.items).
+  const listVisitRes = await client.get('/visits', { headers: authHeaders });
+  assert(
+    listVisitRes.status === 200,
+    `Get visits failed: GET /visits -> HTTP ${listVisitRes.status} - ${JSON.stringify(
+      listVisitRes.data,
+    )}`,
+  );
+  const visits: Array<{ id: string }> = listVisitRes.data?.data?.items ?? [];
+  assert(Array.isArray(visits), 'Visits response did not contain an items array');
+  assert(
+    visits.some((v) => v.id === visitId),
+    'Created visit was not found in the visits list',
+  );
+  pass('Visit fetch successful');
+
+  // 16. Get single visit by id
+  const getVisitRes = await client.get(`/visits/${visitId}`, { headers: authHeaders });
+  assert(
+    getVisitRes.status === 200,
+    `Get single visit failed: GET /visits/${visitId} -> HTTP ${getVisitRes.status} - ${JSON.stringify(
+      getVisitRes.data,
+    )}`,
+  );
+  assert(
+    getVisitRes.data?.data?.id === visitId,
+    `Returned visit id does not match created visit id (got: ${getVisitRes.data?.data?.id})`,
+  );
+  pass('Single visit fetch successful');
+
+  // 17. Update visit status to COMPLETED
+  const updateVisitRes = await client.patch(
+    `/visits/${visitId}`,
+    { status: 'COMPLETED', notes: 'Customer completed property visit' },
+    { headers: authHeaders },
+  );
+  assert(
+    updateVisitRes.status === 200,
+    `Update visit failed: PATCH /visits/${visitId} -> HTTP ${updateVisitRes.status} - ${JSON.stringify(
+      updateVisitRes.data,
+    )}`,
+  );
+  assert(
+    updateVisitRes.data?.data?.status === 'COMPLETED',
+    `Visit status was not updated to COMPLETED (got: ${updateVisitRes.data?.data?.status})`,
+  );
+  pass('Visit status updated');
+
+  // 18. Filter visits by status
+  const filterVisitRes = await client.get('/visits?status=COMPLETED', { headers: authHeaders });
+  assert(
+    filterVisitRes.status === 200,
+    `Filter visits failed: GET /visits?status=COMPLETED -> HTTP ${filterVisitRes.status} - ${JSON.stringify(
+      filterVisitRes.data,
+    )}`,
+  );
+  const filteredVisits: Array<{ id: string; status: string }> =
+    filterVisitRes.data?.data?.items ?? [];
+  assert(Array.isArray(filteredVisits), 'Filtered visits response did not contain an items array');
+  assert(
+    filteredVisits.some((v) => v.id === visitId),
+    'Updated visit was not found when filtering by status=COMPLETED',
+  );
+  assert(
+    filteredVisits.every((v) => v.status === 'COMPLETED'),
+    'Status filter returned visits with a different status',
+  );
+  pass('Visit filtering successful');
+
+  // 19. Delete visit
+  const deleteVisitRes = await client.delete(`/visits/${visitId}`, { headers: authHeaders });
+  assert(
+    deleteVisitRes.status === 200 || deleteVisitRes.status === 204,
+    `Delete visit failed: DELETE /visits/${visitId} -> HTTP ${deleteVisitRes.status} - ${JSON.stringify(
+      deleteVisitRes.data,
+    )}`,
+  );
+  pass('Visit deleted');
 
   console.log('\n\x1b[32mAll API tests passed!\x1b[0m');
 }
