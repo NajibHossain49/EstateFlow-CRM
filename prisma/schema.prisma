@@ -17,6 +17,7 @@ model User {
   updatedAt  DateTime   @updatedAt
   clients    Client[]
   properties Property[]
+  leads      Lead[]
 
   @@map("users")
 }
@@ -57,6 +58,24 @@ model Client {
   @@map("clients")
 }
 
+model Lead {
+  id              String     @id @default(uuid()) @db.Uuid
+  name            String
+  phone           String
+  email           String?
+  source          String
+  status          LeadStatus @default(NEW)
+  notes           String?
+  assignedAgentId String     @db.Uuid
+  assignedAgent   User       @relation(fields: [assignedAgentId], references: [id], onDelete: Cascade)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([assignedAgentId])
+  @@index([status])
+  @@map("leads")
+}
+
 enum Role {
   ADMIN
   AGENT
@@ -73,4 +92,14 @@ enum PropertyStatus {
   AVAILABLE
   SOLD
   RENTED
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  VISIT_SCHEDULED
+  NEGOTIATION
+  WON
+  LOST
 }

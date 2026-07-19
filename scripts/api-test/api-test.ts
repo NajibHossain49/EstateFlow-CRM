@@ -3,7 +3,7 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 /**
  * Automated API smoke test for the EstateFlow CRM backend.
  *
- * Runs the full happy-path flow (register -> login -> properties -> clients)
+ * Runs the full happy-path flow (register -> login -> properties -> clients -> leads)
  * against a running instance and exits non-zero if any step fails.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
@@ -37,6 +37,15 @@ const testClient = {
   email: 'client@example.com',
   budget: 8000000,
   preferredLocation: 'Gulshan',
+};
+
+const testLead = {
+  name: 'Test Lead Customer',
+  phone: '01800000000',
+  email: 'lead@example.com',
+  source: 'FACEBOOK',
+  status: 'NEW',
+  notes: 'Interested in apartment',
 };
 
 // Simple console helpers
@@ -160,6 +169,98 @@ async function run(): Promise<void> {
     'Created client was not found in the clients list',
   );
   pass('Client fetch successful');
+
+  // 8. Create lead
+  const createLeadRes = await client.post('/leads', testLead, { headers: authHeaders });
+  assert(
+    createLeadRes.status === 201,
+    `Create lead failed: POST /leads -> HTTP ${createLeadRes.status} - ${JSON.stringify(
+      createLeadRes.data,
+    )}`,
+  );
+  const leadId: string | undefined = createLeadRes.data?.data?.id;
+  assert(Boolean(leadId), 'Create lead response did not contain lead data with an id');
+  pass('Lead created');
+
+  // 9. Get all leads and verify the created one is present.
+  // The list endpoint is paginated: data = { items: [...], meta: {...} }.
+  const listLeadRes = await client.get('/leads', { headers: authHeaders });
+  assert(
+    listLeadRes.status === 200,
+    `Get leads failed: GET /leads -> HTTP ${listLeadRes.status} - ${JSON.stringify(
+      listLeadRes.data,
+    )}`,
+  );
+  const leads: Array<{ id: string }> = listLeadRes.data?.data?.items ?? [];
+  assert(Array.isArray(leads), 'Leads response did not contain an items array');
+  assert(
+    leads.some((l) => l.id === leadId),
+    'Created lead was not found in the leads list',
+  );
+  pass('Lead fetch successful');
+
+  // 10. Get single lead by id
+  const getLeadRes = await client.get(`/leads/${leadId}`, { headers: authHeaders });
+  assert(
+    getLeadRes.status === 200,
+    `Get single lead failed: GET /leads/${leadId} -> HTTP ${getLeadRes.status} - ${JSON.stringify(
+      getLeadRes.data,
+    )}`,
+  );
+  assert(
+    getLeadRes.data?.data?.id === leadId,
+    `Returned lead id does not match created lead id (got: ${getLeadRes.data?.data?.id})`,
+  );
+  pass('Single lead fetch successful');
+
+  // 11. Update lead status to INTERESTED
+  const updateLeadRes = await client.patch(
+    `/leads/${leadId}`,
+    { status: 'INTERESTED' },
+    { headers: authHeaders },
+  );
+  assert(
+    updateLeadRes.status === 200,
+    `Update lead failed: PATCH /leads/${leadId} -> HTTP ${updateLeadRes.status} - ${JSON.stringify(
+      updateLeadRes.data,
+    )}`,
+  );
+  assert(
+    updateLeadRes.data?.data?.status === 'INTERESTED',
+    `Lead status was not updated to INTERESTED (got: ${updateLeadRes.data?.data?.status})`,
+  );
+  pass('Lead status updated');
+
+  // 12. Filter leads by status
+  const filterLeadRes = await client.get('/leads?status=INTERESTED', { headers: authHeaders });
+  assert(
+    filterLeadRes.status === 200,
+    `Filter leads failed: GET /leads?status=INTERESTED -> HTTP ${filterLeadRes.status} - ${JSON.stringify(
+      filterLeadRes.data,
+    )}`,
+  );
+  const filteredLeads: Array<{ id: string; status: string }> =
+    filterLeadRes.data?.data?.items ?? [];
+  assert(Array.isArray(filteredLeads), 'Filtered leads response did not contain an items array');
+  assert(
+    filteredLeads.some((l) => l.id === leadId),
+    'Updated lead was not found when filtering by status=INTERESTED',
+  );
+  assert(
+    filteredLeads.every((l) => l.status === 'INTERESTED'),
+    'Status filter returned leads with a different status',
+  );
+  pass('Lead filtering successful');
+
+  // 13. Delete lead
+  const deleteLeadRes = await client.delete(`/leads/${leadId}`, { headers: authHeaders });
+  assert(
+    deleteLeadRes.status === 200 || deleteLeadRes.status === 204,
+    `Delete lead failed: DELETE /leads/${leadId} -> HTTP ${deleteLeadRes.status} - ${JSON.stringify(
+      deleteLeadRes.data,
+    )}`,
+  );
+  pass('Lead deleted');
 
   console.log('\n\x1b[32mAll API tests passed!\x1b[0m');
 }
