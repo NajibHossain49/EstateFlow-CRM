@@ -1,0 +1,17 @@
+{
+  "name": "estateflow-api-test",
+  "version": "1.0.0",
+  "description": "Automated API smoke tests for the EstateFlow CRM backend",
+  "private": true,
+  "scripts": {
+    "test:api": "ts-node api-test.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

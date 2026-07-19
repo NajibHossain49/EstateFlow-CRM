@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String     @id @default(uuid()) @db.Uuid
+  name       String
+  email      String     @unique
+  password   String
+  role       Role       @default(AGENT)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  clients    Client[]
+  properties Property[]
+
+  @@map("users")
+}
+
+model Property {
+  id           String         @id @default(uuid()) @db.Uuid
+  title        String
+  description  String
+  price        Decimal        @db.Decimal(12, 2)
+  location     String
+  bedrooms     Int
+  bathrooms    Int
+  area         Int
+  propertyType PropertyType
+  status       PropertyStatus @default(AVAILABLE)
+  createdBy    String         @db.Uuid
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  creator      User           @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdBy])
+  @@map("properties")
+}
+
+model Client {
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String
+  phone             String
+  email             String?
+  budget            Decimal  @db.Decimal(12, 2)
+  preferredLocation String
+  createdBy         String   @db.Uuid
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  creator           User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdBy])
+  @@map("clients")
+}
+
+enum Role {
+  ADMIN
+  AGENT
+}
+
+enum PropertyType {
+  HOUSE
+  APARTMENT
+  LAND
+  COMMERCIAL
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  SOLD
+  RENTED
+}

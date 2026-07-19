@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: estateflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-estateflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-estateflow}
+      POSTGRES_DB: ${POSTGRES_DB:-estateflow}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-estateflow} -d ${POSTGRES_DB:-estateflow}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: estateflow-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Note: host is the compose service name "postgres", not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-estateflow}:${POSTGRES_PASSWORD:-estateflow}@postgres:5432/${POSTGRES_DB:-estateflow}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-super-secret-change-me-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres_data:
+    driver: local
