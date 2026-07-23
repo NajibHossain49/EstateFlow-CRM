@@ -9,11 +9,11 @@ import * as path from 'path';
  * non-zero if any step fails.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
- * The NestJS app is served under the global "/api" prefix, which is appended here.
+ * The NestJS app is served under the versioned "/api/v1" prefix, appended here.
  */
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3000';
-const BASE_URL = `${API_URL.replace(/\/+$/, '')}/api`;
+const BASE_URL = `${API_URL.replace(/\/+$/, '')}/api/v1`;
 
 const testUser = {
   name: 'Test Admin',
@@ -1458,6 +1458,91 @@ async function run(): Promise<void> {
   pass('Transaction verified');
 
   // ---------------------------------------------------------------------------
+  // Performance-related validations: pagination guard, search latency,
+  // dashboard aggregation correctness and database health latency. Runs before
+  // the rate-limit probe so it isn't affected by the intentional 429s.
+  // ---------------------------------------------------------------------------
+
+  // 1. Pagination limit protection: limit far above MAX_LIMIT (100) is rejected.
+  const oversizedLimitRes = await client.get('/properties?limit=5000', { headers: authHeaders });
+  assert(
+    oversizedLimitRes.status === 400,
+    `Pagination guard failed: GET /properties?limit=5000 should be 400, got ${oversizedLimitRes.status}`,
+  );
+  pass('Pagination limit protection verified');
+
+  // 2. Search performance smoke test: search endpoints respond 200 within a
+  //    generous latency budget (guards against accidental full-scan regressions).
+  const SEARCH_BUDGET_MS = 3000;
+  const searchEndpoints = [
+    '/properties?search=Test&limit=20',
+    '/clients?search=Test&limit=20',
+    '/leads?search=Test&limit=20',
+    '/visits?search=Test&limit=20',
+  ];
+  for (const endpoint of searchEndpoints) {
+    const startedAt = Date.now();
+    const searchRes = await client.get(endpoint, { headers: authHeaders });
+    const elapsedMs = Date.now() - startedAt;
+    assert(
+      searchRes.status === 200,
+      `Search performance failed: GET ${endpoint} -> HTTP ${searchRes.status}`,
+    );
+    assert(
+      Array.isArray(searchRes.data?.data),
+      `Search performance failed: GET ${endpoint} did not return a data array`,
+    );
+    assert(
+      elapsedMs < SEARCH_BUDGET_MS,
+      `Search performance failed: GET ${endpoint} took ${elapsedMs}ms (budget ${SEARCH_BUDGET_MS}ms)`,
+    );
+  }
+  pass('Search performance verified');
+
+  // 3. Dashboard aggregation verification: the optimized aggregate queries still
+  //    return correctly-shaped data.
+  const perfOverviewRes = await client.get('/dashboard/overview', { headers: authHeaders });
+  assert(perfOverviewRes.status === 200, `Dashboard overview failed: HTTP ${perfOverviewRes.status}`);
+  const perfOverview = (perfOverviewRes.data?.data ?? {}) as Record<string, unknown>;
+  assert(
+    typeof perfOverview.totalProperties === 'number' && typeof perfOverview.totalLeads === 'number',
+    'Dashboard overview is missing expected numeric aggregates',
+  );
+
+  const perfPipelineRes = await client.get('/dashboard/lead-pipeline', { headers: authHeaders });
+  assert(
+    perfPipelineRes.status === 200,
+    `Dashboard lead-pipeline failed: HTTP ${perfPipelineRes.status}`,
+  );
+  assert(
+    Array.isArray(perfPipelineRes.data?.data),
+    'Dashboard lead-pipeline did not return an array of status buckets',
+  );
+
+  const perfDistributionRes = await client.get('/dashboard/property-distribution', {
+    headers: authHeaders,
+  });
+  assert(
+    perfDistributionRes.status === 200,
+    `Dashboard property-distribution failed: HTTP ${perfDistributionRes.status}`,
+  );
+  pass('Dashboard performance verified');
+
+  // 4. Database health latency: /health now reports a numeric round-trip latency.
+  const perfHealthRes = await client.get('/health');
+  assert(perfHealthRes.status === 200, `Health check failed: HTTP ${perfHealthRes.status}`);
+  const perfHealth = (perfHealthRes.data?.data ?? {}) as {
+    databaseLatencyMs?: unknown;
+    uptime?: unknown;
+  };
+  assert(
+    typeof perfHealth.databaseLatencyMs === 'number' && perfHealth.databaseLatencyMs >= 0,
+    'Health response is missing a numeric databaseLatencyMs',
+  );
+  assert(typeof perfHealth.uptime === 'number', 'Health response is missing a numeric uptime');
+  pass('Database health verified');
+
+  // ---------------------------------------------------------------------------
   // Security hardening verification: health endpoint, Helmet headers and the
   // per-route rate limiter. Run last so the rate-limit probe cannot interfere
   // with the earlier login/register steps.
@@ -1527,6 +1612,114 @@ async function run(): Promise<void> {
     `Rate limiting did not trigger a 429 after repeated logins (statuses: ${loginAttempts.join(', ')})`,
   );
   pass('Rate limiting verified');
+
+  // ---------------------------------------------------------------------------
+  // Backend release engineering verification: URI versioning, Swagger/OpenAPI
+  // reachability, seed dataset presence and a logger smoke test. Uses a raw
+  // client targeting the host root (no /api/v1 baseURL) to probe prefixes.
+  // ---------------------------------------------------------------------------
+  const rawClient: AxiosInstance = axios.create({
+    baseURL: API_URL.replace(/\/+$/, ''),
+    timeout: 10000,
+    validateStatus: () => true,
+  });
+
+  // 1. API versioning: versioned routes resolve, unversioned ones do not.
+  const versionedHealthRes = await rawClient.get('/api/v1/health');
+  assert(
+    versionedHealthRes.status === 200,
+    `API versioning failed: GET /api/v1/health -> HTTP ${versionedHealthRes.status}`,
+  );
+  const unversionedHealthRes = await rawClient.get('/api/health');
+  assert(
+    unversionedHealthRes.status === 404,
+    `API versioning failed: unversioned GET /api/health should be 404, got ${unversionedHealthRes.status}`,
+  );
+  const rootHealthRes = await rawClient.get('/health');
+  assert(
+    rootHealthRes.status === 404,
+    `API versioning failed: prefixless GET /health should be 404, got ${rootHealthRes.status}`,
+  );
+  pass('API versioning verified');
+
+  // 2. Swagger: UI page is reachable and the OpenAPI JSON loads with versioned paths.
+  const swaggerUiRes = await rawClient.get('/api/docs');
+  assert(
+    swaggerUiRes.status === 200,
+    `Swagger UI failed: GET /api/docs -> HTTP ${swaggerUiRes.status}`,
+  );
+  const openApiRes = await rawClient.get('/api/docs-json');
+  assert(
+    openApiRes.status === 200,
+    `OpenAPI JSON failed: GET /api/docs-json -> HTTP ${openApiRes.status}`,
+  );
+  const openApiDoc = (openApiRes.data ?? {}) as {
+    openapi?: unknown;
+    info?: { title?: unknown };
+    paths?: Record<string, unknown>;
+  };
+  assert(
+    typeof openApiDoc.openapi === 'string' && openApiDoc.openapi.length > 0,
+    'OpenAPI document is missing the "openapi" version field',
+  );
+  const openApiPaths = Object.keys(openApiDoc.paths ?? {});
+  assert(openApiPaths.length > 0, 'OpenAPI document exposes no paths');
+  assert(
+    openApiPaths.every((p) => p.startsWith('/api/v1/')),
+    'OpenAPI document contains paths that are not versioned under /api/v1/',
+  );
+  pass('Swagger verified');
+
+  // 3. Seed verification: the seeded admin exists and the dataset is populated.
+  //    Admin sees all records, so the dashboard overview reflects global counts.
+  assert(Boolean(adminToken), 'Seed verification failed: seeded admin account is missing');
+  const seedOverviewRes = await client.get('/dashboard/overview', { headers: adminHeaders });
+  assert(
+    seedOverviewRes.status === 200,
+    `Seed verification failed: GET /dashboard/overview -> HTTP ${seedOverviewRes.status}`,
+  );
+  const seedOverview = (seedOverviewRes.data?.data ?? {}) as {
+    totalProperties?: number;
+    totalClients?: number;
+    totalLeads?: number;
+    scheduledVisits?: number;
+    completedVisits?: number;
+    cancelledVisits?: number;
+  };
+  const seedVisitTotal =
+    (seedOverview.scheduledVisits ?? 0) +
+    (seedOverview.completedVisits ?? 0) +
+    (seedOverview.cancelledVisits ?? 0);
+  assert(
+    (seedOverview.totalProperties ?? 0) > 0,
+    `Seed verification failed: expected properties > 0 (got ${seedOverview.totalProperties})`,
+  );
+  assert(
+    (seedOverview.totalClients ?? 0) > 0,
+    `Seed verification failed: expected clients > 0 (got ${seedOverview.totalClients})`,
+  );
+  assert(
+    (seedOverview.totalLeads ?? 0) > 0,
+    `Seed verification failed: expected leads > 0 (got ${seedOverview.totalLeads})`,
+  );
+  assert(
+    seedVisitTotal > 0,
+    `Seed verification failed: expected visits > 0 (got ${seedVisitTotal})`,
+  );
+  pass('Seed data verified');
+
+  // 4. Logger smoke test: fire a burst of requests and confirm the app keeps
+  //    serving correctly (each request is logged by the LoggingInterceptor;
+  //    log output can be inspected manually in the server console).
+  const loggerProbes = ['/health', '/properties?limit=5', '/clients?limit=5', '/dashboard/overview'];
+  for (const probe of loggerProbes) {
+    const probeRes = await client.get(probe, { headers: authHeaders });
+    assert(
+      probeRes.status === 200,
+      `Logger smoke test failed: GET ${probe} -> HTTP ${probeRes.status}`,
+    );
+  }
+  pass('Logger verification completed');
 
   console.log('\n\x1b[32mAll API tests passed!\x1b[0m');
 }

@@ -187,7 +187,7 @@ npm install          # if you haven't already
 npm run prisma:seed
 ```
 
-- API: http://localhost:3000/api
+- API: http://localhost:3000/api/v1
 - Swagger: http://localhost:3000/api/docs
 
 To only run the database in Docker:
@@ -233,10 +233,13 @@ docker compose up -d postgres
 
 ### Seed data
 
+The seed generates a realistic dataset:
+
 - **1 Admin** — `admin@estateflow.com`
+- **1 Manager** — `manager@estateflow.com`
 - **2 Agents** — `agent1@estateflow.com`, `agent2@estateflow.com`
-- **5 sample properties**
-- **5 sample clients**
+- **100 properties**, **200 clients**, **500 leads**, **100 visits**
+- A `LEAD_CREATED` activity per lead and visits linked to clients, properties, agents and (roughly half) leads
 
 All seeded users share the password: **`Password123!`**
 
@@ -256,7 +259,7 @@ Use the **Authorize** button and paste your JWT (`Bearer <token>`) to try protec
 
 ## API Reference
 
-Base path: **`/api`**
+Base path: **`/api/v1`** (all endpoints below are relative to this versioned prefix).
 
 ### Auth
 
@@ -337,7 +340,7 @@ Every response uses a consistent envelope.
 ### 1. Login to get a token
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/login \
+curl -X POST http://localhost:3000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@estateflow.com","password":"Password123!"}'
 ```
@@ -349,14 +352,14 @@ Copy the `data.accessToken` from the response.
 ```bash
 TOKEN="<paste-access-token>"
 
-curl http://localhost:3000/api/properties \
+curl http://localhost:3000/api/v1/properties \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 3. Create a property
 
 ```bash
-curl -X POST http://localhost:3000/api/properties \
+curl -X POST http://localhost:3000/api/v1/properties \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -372,6 +375,53 @@ curl -X POST http://localhost:3000/api/properties \
 ```
 
 You can also explore and test everything interactively via **Swagger** at `/api/docs`.
+
+---
+
+## API Versioning
+
+The API uses **URI versioning**. Every route is served under a version segment:
+
+```
+/api/v1/<resource>
+```
+
+**Design decisions**
+
+- **URI versioning** (`VersioningType.URI`) was chosen over header/media-type
+  versioning because it is explicit, cache-friendly, and trivial to consume from
+  browsers, cURL and the Swagger UI. It is configured once in `main.ts`
+  (`app.enableVersioning`) with `defaultVersion: '1'`, so controllers need no
+  per-route version decorators today.
+- The version lives **after** the global prefix (`/api`) so infrastructure
+  (load balancers, gateways) can route on `/api` while the application owns
+  version negotiation.
+- The current version is centralized in `API_VERSION`
+  (`src/common/constants/app.constants.ts`).
+
+**Introducing a future version (`v2`)**
+
+1. Add `@Version('2')` to the specific controllers or handlers that change.
+   Unversioned/`v1` handlers keep serving `/api/v1` unchanged — no breaking
+   changes for existing clients.
+2. For a wholesale new version, duplicate the controller (e.g.
+   `properties.v2.controller.ts`) with `@Controller({ path: 'properties', version: '2' })`.
+3. Update the Swagger `addServer` list in `main.ts` to expose the new base path.
+4. Bump `API_VERSION` only when `v2` becomes the default.
+
+Because versions are additive, `v1` and `v2` can run side by side, allowing
+clients to migrate on their own schedule.
+
+---
+
+## Observability & Logging
+
+- Requests are logged by a global `LoggingInterceptor` that emits a structured
+  JSON line per request: `{ method, url, statusCode, durationMs }`.
+- Log level is derived from the response status: **5xx → ERROR**, **4xx → WARN**,
+  otherwise **INFO**. A **DEBUG** line marks request start (suppressed in
+  production via `app.useLogger`).
+- Prisma slow queries (>500ms) are logged as warnings by `PrismaService`.
 
 ---
 

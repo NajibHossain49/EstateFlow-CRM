@@ -165,7 +165,15 @@ export class VisitsService {
   }
 
   async update(id: string, dto: UpdateVisitDto, user: AuthenticatedUser): Promise<Visit> {
-    const existing = await this.findOne(id, user);
+    // Pre-check needs only the owner and current status (no relation JOINs).
+    const existing = await this.prisma.visit.findFirst({
+      where: { id },
+      select: { agentId: true, status: true },
+    });
+    if (!existing) {
+      throw new ResourceNotFoundException('Visit', id);
+    }
+    this.assertCanManage(existing, user);
 
     if (dto.clientId) {
       await this.ensureClientExists(dto.clientId);
@@ -204,7 +212,14 @@ export class VisitsService {
 
   /** Soft delete: stamps deletedAt / deletedById instead of removing the row. */
   async remove(id: string, user: AuthenticatedUser): Promise<Visit> {
-    await this.findOne(id, user);
+    const existing = await this.prisma.visit.findFirst({
+      where: { id },
+      select: { agentId: true },
+    });
+    if (!existing) {
+      throw new ResourceNotFoundException('Visit', id);
+    }
+    this.assertCanManage(existing, user);
 
     return this.prisma.visit.update({
       where: { id },
@@ -264,7 +279,7 @@ export class VisitsService {
     }
   }
 
-  private assertCanManage(visit: Visit, user: AuthenticatedUser): void {
+  private assertCanManage(visit: Pick<Visit, 'agentId'>, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && visit.agentId !== user.id) {
       throw new ForbiddenActionException('You can only access visits assigned to you');
     }

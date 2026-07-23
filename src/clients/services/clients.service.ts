@@ -103,7 +103,7 @@ export class ClientsService {
   }
 
   async update(id: string, dto: UpdateClientDto, user: AuthenticatedUser): Promise<Client> {
-    await this.findOne(id, user);
+    await this.assertCanManageById(id, user);
 
     return this.prisma.client.update({
       where: { id },
@@ -114,7 +114,7 @@ export class ClientsService {
 
   /** Soft delete: stamps deletedAt / deletedById instead of removing the row. */
   async remove(id: string, user: AuthenticatedUser): Promise<Client> {
-    await this.findOne(id, user);
+    await this.assertCanManageById(id, user);
 
     return this.prisma.client.update({
       where: { id },
@@ -144,7 +144,19 @@ export class ClientsService {
     });
   }
 
-  private assertCanManage(client: Client, user: AuthenticatedUser): void {
+  /** Lightweight ownership check for write paths (selects only the owner column). */
+  private async assertCanManageById(id: string, user: AuthenticatedUser): Promise<void> {
+    const client = await this.prisma.client.findFirst({
+      where: { id },
+      select: { createdBy: true },
+    });
+    if (!client) {
+      throw new ResourceNotFoundException('Client', id);
+    }
+    this.assertCanManage(client, user);
+  }
+
+  private assertCanManage(client: Pick<Client, 'createdBy'>, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && client.createdBy !== user.id) {
       throw new ForbiddenActionException('You can only access clients you created');
     }

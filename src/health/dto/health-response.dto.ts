@@ -11,6 +11,13 @@ export class HealthResponseDto {
   @ApiProperty({ example: 'up', enum: ['up', 'down'], description: 'Database connectivity' })
   database!: 'up' | 'down';
 
+  @ApiProperty({
+    example: 2.41,
+    nullable: true,
+    description: 'Database round-trip latency in milliseconds (null when the database is down)',
+  })
+  databaseLatencyMs!: number | null;
+
   @ApiProperty({ example: 12345, description: 'Process uptime in seconds' })
   uptime!: number;
 

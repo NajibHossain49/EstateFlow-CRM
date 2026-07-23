@@ -102,8 +102,7 @@ export class PropertiesService {
   }
 
   async update(id: string, dto: UpdatePropertyDto, user: AuthenticatedUser): Promise<Property> {
-    const property = await this.findOne(id);
-    this.assertCanManage(property, user);
+    await this.assertCanManageById(id, user);
 
     return this.prisma.property.update({
       where: { id },
@@ -118,8 +117,7 @@ export class PropertiesService {
    * soft-deleted rows, so deleting an already-deleted property returns 404.
    */
   async remove(id: string, user: AuthenticatedUser): Promise<Property> {
-    const property = await this.findOne(id);
-    this.assertCanManage(property, user);
+    await this.assertCanManageById(id, user);
 
     return this.prisma.property.update({
       where: { id },
@@ -150,9 +148,25 @@ export class PropertiesService {
   }
 
   /**
+   * Ownership check for write paths. Selects only the owner column (no relation
+   * JOIN) instead of reusing findOne, which would fetch the full record and its
+   * creator relation just to read createdBy.
+   */
+  private async assertCanManageById(id: string, user: AuthenticatedUser): Promise<void> {
+    const property = await this.prisma.property.findFirst({
+      where: { id },
+      select: { createdBy: true },
+    });
+    if (!property) {
+      throw new ResourceNotFoundException('Property', id);
+    }
+    this.assertCanManage(property, user);
+  }
+
+  /**
    * Admins can manage every property; agents only the ones they created.
    */
-  private assertCanManage(property: Property, user: AuthenticatedUser): void {
+  private assertCanManage(property: Pick<Property, 'createdBy'>, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && property.createdBy !== user.id) {
       throw new ForbiddenActionException('You can only manage properties you created');
     }

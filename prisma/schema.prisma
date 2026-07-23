@@ -48,6 +48,13 @@ model Property {
 
   @@index([createdBy])
   @@index([deletedAt])
+  @@index([status])
+  @@index([propertyType])
+  @@index([location])
+  @@index([price])
+  @@index([createdAt])
+  @@index([status, propertyType])
+  @@index([location, status])
   @@map("properties")
 }
 
@@ -96,6 +103,9 @@ model Lead {
   @@index([assignedAgentId])
   @@index([status])
   @@index([deletedAt])
+  @@index([source])
+  @@index([createdAt])
+  @@index([status, assignedAgentId])
   @@map("leads")
 }
 
@@ -125,6 +135,7 @@ model Visit {
   @@index([leadId])
   @@index([status])
   @@index([deletedAt])
+  @@index([visitDate])
   @@map("visits")
 }
 
@@ -145,6 +156,8 @@ model Activity {
   @@index([leadId])
   @@index([createdBy])
   @@index([deletedAt])
+  @@index([createdAt])
+  @@index([createdById])
   @@map("activities")
 }
 
@@ -182,6 +195,7 @@ enum MediaEntityType {
 
 enum Role {
   ADMIN
+  MANAGER
   AGENT
 }
 

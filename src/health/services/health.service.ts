@@ -16,23 +16,31 @@ export class HealthService {
    * throwing, so monitoring tools always get a structured answer.
    */
   async check(): Promise<HealthResponseDto> {
-    const database = await this.pingDatabase();
+    const { status: database, latencyMs } = await this.pingDatabase();
 
     return {
       status: database === 'up' ? 'ok' : 'degraded',
       database,
+      databaseLatencyMs: latencyMs,
       uptime: Math.floor(process.uptime()),
       version: this.config.get<string>('version') ?? '1.0.0',
       timestamp: new Date().toISOString(),
     };
   }
 
-  private async pingDatabase(): Promise<'up' | 'down'> {
+  /**
+   * Probes the database with a trivial `SELECT 1` and measures the round-trip
+   * latency with a high-resolution timer. A failure downgrades the status to
+   * "down" (latency null) instead of throwing.
+   */
+  private async pingDatabase(): Promise<{ status: 'up' | 'down'; latencyMs: number | null }> {
+    const start = process.hrtime.bigint();
     try {
       await this.prisma.$queryRaw`SELECT 1`;
-      return 'up';
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+      return { status: 'up', latencyMs: Math.round(elapsedMs * 100) / 100 };
     } catch {
-      return 'down';
+      return { status: 'down', latencyMs: null };
     }
   }
 }

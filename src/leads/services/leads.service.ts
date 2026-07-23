@@ -127,7 +127,16 @@ export class LeadsService {
   }
 
   async update(id: string, dto: UpdateLeadDto, user: AuthenticatedUser): Promise<Lead> {
-    const existing = await this.findOne(id, user);
+    // Only the owner column and current status are needed for the pre-check —
+    // no relation JOIN — so we select those instead of reusing findOne.
+    const existing = await this.prisma.lead.findFirst({
+      where: { id },
+      select: { assignedAgentId: true, status: true },
+    });
+    if (!existing) {
+      throw new ResourceNotFoundException('Lead', id);
+    }
+    this.assertCanManage(existing, user);
 
     const updated = await this.prisma.lead.update({
       where: { id },
@@ -157,7 +166,14 @@ export class LeadsService {
 
   /** Soft delete: stamps deletedAt / deletedById instead of removing the row. */
   async remove(id: string, user: AuthenticatedUser): Promise<Lead> {
-    await this.findOne(id, user);
+    const existing = await this.prisma.lead.findFirst({
+      where: { id },
+      select: { assignedAgentId: true },
+    });
+    if (!existing) {
+      throw new ResourceNotFoundException('Lead', id);
+    }
+    this.assertCanManage(existing, user);
 
     return this.prisma.lead.update({
       where: { id },
@@ -187,7 +203,7 @@ export class LeadsService {
     });
   }
 
-  private assertCanManage(lead: Lead, user: AuthenticatedUser): void {
+  private assertCanManage(lead: Pick<Lead, 'assignedAgentId'>, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && lead.assignedAgentId !== user.id) {
       throw new ForbiddenActionException('You can only access leads assigned to you');
     }

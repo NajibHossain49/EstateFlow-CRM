@@ -16,11 +16,11 @@ import * as path from 'path';
  * do not touch the provider) instead of reporting a false failure.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
- * The NestJS app is served under the global "/api" prefix, which is appended here.
+ * The NestJS app is served under the versioned "/api/v1" prefix, appended here.
  */
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3000';
-const BASE_URL = `${API_URL.replace(/\/+$/, '')}/api`;
+const BASE_URL = `${API_URL.replace(/\/+$/, '')}/api/v1`;
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 const VALID_IMAGE_PATH = path.join(FIXTURES_DIR, 'valid.png');
