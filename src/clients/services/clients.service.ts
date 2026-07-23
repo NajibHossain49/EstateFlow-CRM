@@ -2,7 +2,9 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Client, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
 import { CreateClientDto } from '../dto/create-client.dto';
+import { QueryClientsDto } from '../dto/query-clients.dto';
 import { UpdateClientDto } from '../dto/update-client.dto';
 
 const clientInclude = {
@@ -25,14 +27,56 @@ export class ClientsService {
   }
 
   /**
+   * Lists clients with search, filtering, sorting and pagination.
    * Admins see all clients; agents see only the clients they created.
    */
-  findAll(user: AuthenticatedUser): Promise<Client[]> {
-    return this.prisma.client.findMany({
-      where: user.role === Role.ADMIN ? undefined : { createdBy: user.id },
-      include: clientInclude,
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(query: QueryClientsDto, user: AuthenticatedUser): Promise<PaginatedResult<Client>> {
+    const { page, limit, sortBy, sortOrder } = query;
+    const where = this.buildWhere(query, user);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.client.findMany({
+        where,
+        include: clientInclude,
+        orderBy: { [sortBy]: sortOrder },
+        skip: getSkip(page, limit),
+        take: limit,
+      }),
+      this.prisma.client.count({ where }),
+    ]);
+
+    return { items, meta: buildPaginationMeta(page, limit, total) };
+  }
+
+  /** Builds the Prisma filter dynamically, ignoring undefined query params. */
+  private buildWhere(query: QueryClientsDto, user: AuthenticatedUser): Prisma.ClientWhereInput {
+    const { search, preferredLocation, minBudget, maxBudget } = query;
+    const where: Prisma.ClientWhereInput = {};
+
+    if (preferredLocation) {
+      where.preferredLocation = { contains: preferredLocation, mode: 'insensitive' };
+    }
+    if (minBudget !== undefined || maxBudget !== undefined) {
+      where.budget = {
+        ...(minBudget !== undefined ? { gte: minBudget } : {}),
+        ...(maxBudget !== undefined ? { lte: maxBudget } : {}),
+      };
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { preferredLocation: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Ownership scope wins: agents only ever see their own clients.
+    if (user.role !== Role.ADMIN) {
+      where.createdBy = user.id;
+    }
+
+    return where;
   }
 
   async findOne(id: string, user: AuthenticatedUser): Promise<Client> {

@@ -1,32 +1,58 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsDateString, IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { VisitStatus } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
-export class QueryVisitsDto {
-  @ApiPropertyOptional({ example: 1, minimum: 1, default: 1, description: 'Page number' })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page: number = 1;
+export const VISIT_SORT_FIELDS = ['visitDate', 'createdAt', 'updatedAt', 'status'] as const;
 
+export type VisitSortField = (typeof VISIT_SORT_FIELDS)[number];
+
+export class QueryVisitsDto extends PaginationQueryDto {
   @ApiPropertyOptional({
-    example: 10,
-    minimum: 1,
-    maximum: 100,
-    default: 10,
-    description: 'Items per page',
+    enum: VISIT_SORT_FIELDS,
+    default: 'visitDate',
+    description: 'Field to sort by',
   })
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit: number = 10;
+  @IsIn(VISIT_SORT_FIELDS)
+  sortBy: VisitSortField = 'visitDate';
 
   @ApiPropertyOptional({ enum: VisitStatus, description: 'Filter visits by status' })
   @IsOptional()
   @IsEnum(VisitStatus)
   status?: VisitStatus;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Filter by agent id (admins only; agents are always scoped to their own)',
+  })
+  @IsOptional()
+  @IsUUID()
+  agentId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Filter by client id' })
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Filter by property id' })
+  @IsOptional()
+  @IsUUID()
+  propertyId?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-07-01T00:00:00.000Z',
+    description: 'Only visits scheduled on/after this ISO date',
+  })
+  @IsOptional()
+  @IsDateString()
+  fromDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-07-31T23:59:59.999Z',
+    description: 'Only visits scheduled on/before this ISO date',
+  })
+  @IsOptional()
+  @IsDateString()
+  toDate?: string;
 }

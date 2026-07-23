@@ -129,11 +129,12 @@ async function run(): Promise<void> {
   assert(Boolean(propertyId), 'Create property response did not contain an id');
   pass('Property created');
 
-  // 4. Get all properties and verify the created one is present
+  // 4. Get all properties and verify the created one is present.
+  // The list endpoint is paginated: data = { items: [...], meta: {...} }.
   const listPropRes = await client.get('/properties', { headers: authHeaders });
   assert(listPropRes.status === 200, `Get properties failed: HTTP ${listPropRes.status}`);
-  const properties: Array<{ id: string }> = listPropRes.data?.data ?? [];
-  assert(Array.isArray(properties), 'Properties response data is not an array');
+  const properties: Array<{ id: string }> = listPropRes.data?.data?.items ?? [];
+  assert(Array.isArray(properties), 'Properties response did not contain an items array');
   assert(
     properties.some((p) => p.id === propertyId),
     'Created property was not found in the properties list',
@@ -166,11 +167,11 @@ async function run(): Promise<void> {
   assert(Boolean(clientId), 'Create client response did not contain an id');
   pass('Client created');
 
-  // 7. Get clients and verify the created one is present
+  // 7. Get clients and verify the created one is present (paginated: data.items).
   const listClientRes = await client.get('/clients', { headers: authHeaders });
   assert(listClientRes.status === 200, `Get clients failed: HTTP ${listClientRes.status}`);
-  const clients: Array<{ id: string }> = listClientRes.data?.data ?? [];
-  assert(Array.isArray(clients), 'Clients response data is not an array');
+  const clients: Array<{ id: string }> = listClientRes.data?.data?.items ?? [];
+  assert(Array.isArray(clients), 'Clients response did not contain an items array');
   assert(
     clients.some((c) => c.id === clientId),
     'Created client was not found in the clients list',

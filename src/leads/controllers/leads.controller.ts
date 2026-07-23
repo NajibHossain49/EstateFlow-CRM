@@ -36,7 +36,12 @@ export class LeadsController {
 
   @Get()
   @ResponseMessage('Leads retrieved successfully')
-  @ApiOperation({ summary: 'List leads with pagination and optional status filter' })
+  @ApiOperation({
+    summary: 'List leads with search, filtering, sorting and pagination',
+    description:
+      'Supports page, limit, search (name/phone/email/source/notes), sortBy, sortOrder, ' +
+      'status, source, assignedAgent, createdFrom, createdTo. Admins see all leads, agents see their own.',
+  })
   findAll(@Query() query: QueryLeadsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.leadsService.findAll(query, user);
   }

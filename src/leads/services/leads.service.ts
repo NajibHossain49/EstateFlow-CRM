@@ -3,6 +3,7 @@ import { ActivityType, Lead, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
 import { CreateLeadDto } from '../dto/create-lead.dto';
 import { QueryLeadsDto } from '../dto/query-leads.dto';
 import { UpdateLeadDto } from '../dto/update-lead.dto';
@@ -10,16 +11,6 @@ import { UpdateLeadDto } from '../dto/update-lead.dto';
 const leadInclude = {
   assignedAgent: { select: { id: true, name: true, email: true, role: true } },
 } satisfies Prisma.LeadInclude;
-
-export interface PaginatedLeads {
-  items: Lead[];
-  meta: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
 
 @Injectable()
 export class LeadsService {
@@ -50,37 +41,63 @@ export class LeadsService {
   }
 
   /**
-   * Lists leads with pagination and optional status filtering.
+   * Lists leads with search, filtering, sorting and pagination.
    * Admins see all leads; agents see only the leads assigned to them.
    */
-  async findAll(query: QueryLeadsDto, user: AuthenticatedUser): Promise<PaginatedLeads> {
-    const { page, limit, status } = query;
-
-    const where: Prisma.LeadWhereInput = {
-      ...(status ? { status } : {}),
-      ...(user.role === Role.ADMIN ? {} : { assignedAgentId: user.id }),
-    };
+  async findAll(query: QueryLeadsDto, user: AuthenticatedUser): Promise<PaginatedResult<Lead>> {
+    const { page, limit, sortBy, sortOrder } = query;
+    const where = this.buildWhere(query, user);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         where,
         include: leadInclude,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
+        orderBy: { [sortBy]: sortOrder },
+        skip: getSkip(page, limit),
         take: limit,
       }),
       this.prisma.lead.count({ where }),
     ]);
 
-    return {
-      items,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 0,
-      },
-    };
+    return { items, meta: buildPaginationMeta(page, limit, total) };
+  }
+
+  /** Builds the Prisma filter dynamically, ignoring undefined query params. */
+  private buildWhere(query: QueryLeadsDto, user: AuthenticatedUser): Prisma.LeadWhereInput {
+    const { search, status, source, assignedAgent, createdFrom, createdTo } = query;
+    const where: Prisma.LeadWhereInput = {};
+
+    if (status) {
+      where.status = status;
+    }
+    if (source) {
+      where.source = { contains: source, mode: 'insensitive' };
+    }
+    if (assignedAgent) {
+      where.assignedAgentId = assignedAgent;
+    }
+    if (createdFrom || createdTo) {
+      where.createdAt = {
+        ...(createdFrom ? { gte: new Date(createdFrom) } : {}),
+        ...(createdTo ? { lte: new Date(createdTo) } : {}),
+      };
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { source: { contains: search, mode: 'insensitive' } },
+        { notes: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Ownership scope wins: agents only ever see leads assigned to them.
+    if (user.role !== Role.ADMIN) {
+      where.assignedAgentId = user.id;
+    }
+
+    return where;
   }
 
   async findOne(id: string, user: AuthenticatedUser): Promise<Lead> {

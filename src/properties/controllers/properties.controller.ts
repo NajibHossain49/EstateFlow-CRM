@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -15,6 +16,7 @@ import { ResponseMessage } from '../../common/decorators/response-message.decora
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CreatePropertyDto } from '../dto/create-property.dto';
+import { QueryPropertiesDto } from '../dto/query-properties.dto';
 import { UpdatePropertyDto } from '../dto/update-property.dto';
 import { PropertiesService } from '../services/properties.service';
 
@@ -34,9 +36,14 @@ export class PropertiesController {
 
   @Get()
   @ResponseMessage('Properties retrieved successfully')
-  @ApiOperation({ summary: 'List all properties' })
-  findAll() {
-    return this.propertiesService.findAll();
+  @ApiOperation({
+    summary: 'List properties with search, filtering, sorting and pagination',
+    description:
+      'Supports page, limit, search (title/description/location), sortBy, sortOrder, ' +
+      'status, propertyType, minPrice, maxPrice, minBedrooms, maxBedrooms.',
+  })
+  findAll(@Query() query: QueryPropertiesDto) {
+    return this.propertiesService.findAll(query);
   }
 
   @Get(':id')

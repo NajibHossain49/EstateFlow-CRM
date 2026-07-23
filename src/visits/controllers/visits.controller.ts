@@ -36,7 +36,12 @@ export class VisitsController {
 
   @Get()
   @ResponseMessage('Visits retrieved successfully')
-  @ApiOperation({ summary: 'List visits with pagination and optional status filter' })
+  @ApiOperation({
+    summary: 'List visits with search, filtering, sorting and pagination',
+    description:
+      'Supports page, limit, search (notes/client name/property title), sortBy, sortOrder, ' +
+      'status, agentId, clientId, propertyId, fromDate, toDate. Admins see all visits, agents see their own.',
+  })
   findAll(@Query() query: QueryVisitsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.visitsService.findAll(query, user);
   }

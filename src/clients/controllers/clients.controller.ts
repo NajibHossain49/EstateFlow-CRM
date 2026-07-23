@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -15,6 +16,7 @@ import { ResponseMessage } from '../../common/decorators/response-message.decora
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CreateClientDto } from '../dto/create-client.dto';
+import { QueryClientsDto } from '../dto/query-clients.dto';
 import { UpdateClientDto } from '../dto/update-client.dto';
 import { ClientsService } from '../services/clients.service';
 
@@ -34,9 +36,14 @@ export class ClientsController {
 
   @Get()
   @ResponseMessage('Clients retrieved successfully')
-  @ApiOperation({ summary: 'List clients (admins see all, agents see their own)' })
-  findAll(@CurrentUser() user: AuthenticatedUser) {
-    return this.clientsService.findAll(user);
+  @ApiOperation({
+    summary: 'List clients with search, filtering, sorting and pagination',
+    description:
+      'Supports page, limit, search (name/phone/email/location), sortBy, sortOrder, ' +
+      'preferredLocation, minBudget, maxBudget. Admins see all clients, agents see their own.',
+  })
+  findAll(@Query() query: QueryClientsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.clientsService.findAll(query, user);
   }
 
   @Get(':id')

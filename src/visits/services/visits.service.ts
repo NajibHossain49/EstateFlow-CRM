@@ -8,6 +8,7 @@ import { ActivityType, Prisma, Role, Visit, VisitStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
 import { CreateVisitDto } from '../dto/create-visit.dto';
 import { QueryVisitsDto } from '../dto/query-visits.dto';
 import { UpdateVisitDto } from '../dto/update-visit.dto';
@@ -17,16 +18,6 @@ const visitInclude = {
   property: { select: { id: true, title: true, location: true, price: true, status: true } },
   agent: { select: { id: true, name: true, email: true, role: true } },
 } satisfies Prisma.VisitInclude;
-
-export interface PaginatedVisits {
-  items: Visit[];
-  meta: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-}
 
 @Injectable()
 export class VisitsService {
@@ -81,37 +72,64 @@ export class VisitsService {
   }
 
   /**
-   * Lists visits with pagination and optional status filtering.
+   * Lists visits with search, filtering, sorting and pagination.
    * Admins see all visits; agents see only their own.
    */
-  async findAll(query: QueryVisitsDto, user: AuthenticatedUser): Promise<PaginatedVisits> {
-    const { page, limit, status } = query;
-
-    const where: Prisma.VisitWhereInput = {
-      ...(status ? { status } : {}),
-      ...(user.role === Role.ADMIN ? {} : { agentId: user.id }),
-    };
+  async findAll(query: QueryVisitsDto, user: AuthenticatedUser): Promise<PaginatedResult<Visit>> {
+    const { page, limit, sortBy, sortOrder } = query;
+    const where = this.buildWhere(query, user);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.visit.findMany({
         where,
         include: visitInclude,
-        orderBy: { visitDate: 'desc' },
-        skip: (page - 1) * limit,
+        orderBy: { [sortBy]: sortOrder },
+        skip: getSkip(page, limit),
         take: limit,
       }),
       this.prisma.visit.count({ where }),
     ]);
 
-    return {
-      items,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 0,
-      },
-    };
+    return { items, meta: buildPaginationMeta(page, limit, total) };
+  }
+
+  /** Builds the Prisma filter dynamically, ignoring undefined query params. */
+  private buildWhere(query: QueryVisitsDto, user: AuthenticatedUser): Prisma.VisitWhereInput {
+    const { search, status, agentId, clientId, propertyId, fromDate, toDate } = query;
+    const where: Prisma.VisitWhereInput = {};
+
+    if (status) {
+      where.status = status;
+    }
+    if (agentId) {
+      where.agentId = agentId;
+    }
+    if (clientId) {
+      where.clientId = clientId;
+    }
+    if (propertyId) {
+      where.propertyId = propertyId;
+    }
+    if (fromDate || toDate) {
+      where.visitDate = {
+        ...(fromDate ? { gte: new Date(fromDate) } : {}),
+        ...(toDate ? { lte: new Date(toDate) } : {}),
+      };
+    }
+    if (search) {
+      where.OR = [
+        { notes: { contains: search, mode: 'insensitive' } },
+        { client: { name: { contains: search, mode: 'insensitive' } } },
+        { property: { title: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    // Ownership scope wins: agents only ever see their own visits.
+    if (user.role !== Role.ADMIN) {
+      where.agentId = user.id;
+    }
+
+    return where;
   }
 
   async findOne(id: string, user: AuthenticatedUser): Promise<Visit> {

@@ -2,7 +2,9 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Prisma, Property, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
 import { CreatePropertyDto } from '../dto/create-property.dto';
+import { QueryPropertiesDto } from '../dto/query-properties.dto';
 import { UpdatePropertyDto } from '../dto/update-property.dto';
 
 const propertyInclude = {
@@ -24,11 +26,60 @@ export class PropertiesService {
     });
   }
 
-  findAll(): Promise<Property[]> {
-    return this.prisma.property.findMany({
-      include: propertyInclude,
-      orderBy: { createdAt: 'desc' },
-    });
+  /**
+   * Lists properties with search, filtering, sorting and pagination.
+   * Properties are viewable by any authenticated user (no ownership scoping).
+   */
+  async findAll(query: QueryPropertiesDto): Promise<PaginatedResult<Property>> {
+    const { page, limit, sortBy, sortOrder } = query;
+    const where = this.buildWhere(query);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.property.findMany({
+        where,
+        include: propertyInclude,
+        orderBy: { [sortBy]: sortOrder },
+        skip: getSkip(page, limit),
+        take: limit,
+      }),
+      this.prisma.property.count({ where }),
+    ]);
+
+    return { items, meta: buildPaginationMeta(page, limit, total) };
+  }
+
+  /** Builds the Prisma filter dynamically, ignoring undefined query params. */
+  private buildWhere(query: QueryPropertiesDto): Prisma.PropertyWhereInput {
+    const { search, status, propertyType, minPrice, maxPrice, minBedrooms, maxBedrooms } = query;
+    const where: Prisma.PropertyWhereInput = {};
+
+    if (status) {
+      where.status = status;
+    }
+    if (propertyType) {
+      where.propertyType = propertyType;
+    }
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      where.price = {
+        ...(minPrice !== undefined ? { gte: minPrice } : {}),
+        ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
+      };
+    }
+    if (minBedrooms !== undefined || maxBedrooms !== undefined) {
+      where.bedrooms = {
+        ...(minBedrooms !== undefined ? { gte: minBedrooms } : {}),
+        ...(maxBedrooms !== undefined ? { lte: maxBedrooms } : {}),
+      };
+    }
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { location: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    return where;
   }
 
   async findOne(id: string): Promise<Property> {
