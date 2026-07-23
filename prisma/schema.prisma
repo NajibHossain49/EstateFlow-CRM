@@ -39,10 +39,15 @@ model Property {
   createdBy    String         @db.Uuid
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
+  deletedAt    DateTime?
+  createdById  String?        @db.Uuid
+  updatedById  String?        @db.Uuid
+  deletedById  String?        @db.Uuid
   creator      User           @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   visits       Visit[]
 
   @@index([createdBy])
+  @@index([deletedAt])
   @@map("properties")
 }
 
@@ -56,10 +61,15 @@ model Client {
   createdBy         String   @db.Uuid
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+  createdById       String?  @db.Uuid
+  updatedById       String?  @db.Uuid
+  deletedById       String?  @db.Uuid
   creator           User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   visits            Visit[]
 
   @@index([createdBy])
+  @@index([deletedAt])
   @@map("clients")
 }
 
@@ -75,12 +85,17 @@ model Lead {
   assignedAgent   User       @relation(fields: [assignedAgentId], references: [id], onDelete: Cascade)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+  createdById     String?    @db.Uuid
+  updatedById     String?    @db.Uuid
+  deletedById     String?    @db.Uuid
 
   activities      Activity[]
   visits          Visit[]
 
   @@index([assignedAgentId])
   @@index([status])
+  @@index([deletedAt])
   @@map("leads")
 }
 
@@ -99,12 +114,17 @@ model Visit {
   notes      String?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
+  deletedAt  DateTime?
+  createdById String?    @db.Uuid
+  updatedById String?    @db.Uuid
+  deletedById String?    @db.Uuid
 
   @@index([clientId])
   @@index([propertyId])
   @@index([agentId])
   @@index([leadId])
   @@index([status])
+  @@index([deletedAt])
   @@map("visits")
 }
 
@@ -117,9 +137,14 @@ model Activity {
   createdBy   String       @db.Uuid
   creator     User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   createdAt   DateTime     @default(now())
+  deletedAt   DateTime?
+  createdById String?      @db.Uuid
+  updatedById String?      @db.Uuid
+  deletedById String?      @db.Uuid
 
   @@index([leadId])
   @@index([createdBy])
+  @@index([deletedAt])
   @@map("activities")
 }
 
@@ -140,9 +165,14 @@ model Media {
   createdBy    String           @db.Uuid
   creator      User             @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   createdAt    DateTime         @default(now())
+  deletedAt    DateTime?
+  createdById  String?          @db.Uuid
+  updatedById  String?          @db.Uuid
+  deletedById  String?          @db.Uuid
 
   @@index([entityType, entityId])
   @@index([createdBy])
+  @@index([deletedAt])
   @@map("media")
 }
 

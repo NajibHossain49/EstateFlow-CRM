@@ -66,8 +66,15 @@ export class VisitsController {
 
   @Delete(':id')
   @ResponseMessage('Visit deleted successfully')
-  @ApiOperation({ summary: 'Delete a visit (assigned agent or admin)' })
+  @ApiOperation({ summary: 'Soft-delete a visit (assigned agent or admin)' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.visitsService.remove(id, user);
+  }
+
+  @Patch(':id/restore')
+  @ResponseMessage('Visit restored successfully')
+  @ApiOperation({ summary: 'Restore a soft-deleted visit (assigned agent or admin)' })
+  restore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.visitsService.restore(id, user);
   }
 }

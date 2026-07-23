@@ -42,8 +42,8 @@ export class PropertiesController {
       'Supports page, limit, search (title/description/location), sortBy, sortOrder, ' +
       'status, propertyType, minPrice, maxPrice, minBedrooms, maxBedrooms.',
   })
-  findAll(@Query() query: QueryPropertiesDto) {
-    return this.propertiesService.findAll(query);
+  findAll(@Query() query: QueryPropertiesDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.propertiesService.findAll(query, user);
   }
 
   @Get(':id')
@@ -66,8 +66,15 @@ export class PropertiesController {
 
   @Delete(':id')
   @ResponseMessage('Property deleted successfully')
-  @ApiOperation({ summary: 'Delete a property (owner or admin)' })
+  @ApiOperation({ summary: 'Soft-delete a property (owner or admin)' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.propertiesService.remove(id, user);
+  }
+
+  @Patch(':id/restore')
+  @ResponseMessage('Property restored successfully')
+  @ApiOperation({ summary: 'Restore a soft-deleted property (owner or admin)' })
+  restore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.propertiesService.restore(id, user);
   }
 }

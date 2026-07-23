@@ -24,19 +24,30 @@ export class ActivitiesService {
    * Records an activity in the audit timeline. This is called internally by the
    * Lead and Visit modules — there is no public endpoint to create activities.
    *
-   * Best-effort by design: a failure to write an audit entry is logged but never
-   * propagated, so it cannot break the primary CRM action that triggered it.
+   * When a transaction client (`tx`) is supplied the write joins the caller's
+   * transaction and errors propagate, so it can be committed/rolled back
+   * atomically with the primary action (e.g. lead/visit creation).
+   *
+   * Without `tx` it is best-effort: a failure to write a standalone audit entry
+   * is logged but never propagated, so it cannot break the CRM action that
+   * triggered it (e.g. recording a status change on update).
    */
-  async record(input: RecordActivityInput): Promise<void> {
+  async record(input: RecordActivityInput, tx?: Prisma.TransactionClient): Promise<void> {
+    const data = {
+      type: input.type,
+      description: input.description,
+      createdBy: input.createdBy,
+      createdById: input.createdBy,
+      leadId: input.leadId ?? null,
+    };
+
+    if (tx) {
+      await tx.activity.create({ data });
+      return;
+    }
+
     try {
-      await this.prisma.activity.create({
-        data: {
-          type: input.type,
-          description: input.description,
-          createdBy: input.createdBy,
-          leadId: input.leadId ?? null,
-        },
-      });
+      await this.prisma.activity.create({ data });
     } catch (error) {
       this.logger.warn(
         `Failed to record activity (${input.type}): ${
@@ -51,7 +62,7 @@ export class ActivitiesService {
    * Access mirrors the Lead module: admins see any lead, agents only their own.
    */
   async findByLead(leadId: string, user: AuthenticatedUser): Promise<Activity[]> {
-    const lead = await this.prisma.lead.findUnique({
+    const lead = await this.prisma.lead.findFirst({
       where: { id: leadId },
       select: { id: true, assignedAgentId: true },
     });

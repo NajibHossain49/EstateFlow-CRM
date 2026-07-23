@@ -226,21 +226,21 @@ export class DashboardService {
         SELECT to_char(date_trunc('month', "createdAt"), 'YYYY-MM') AS month,
                count(*)::int AS count
         FROM "leads"
-        WHERE "createdAt" >= ${start} ${leadAgentFilter}
+        WHERE "createdAt" >= ${start} AND "deletedAt" IS NULL ${leadAgentFilter}
         GROUP BY 1
       `),
       this.prisma.$queryRaw<MonthCountRow[]>(Prisma.sql`
         SELECT to_char(date_trunc('month', "visitDate"), 'YYYY-MM') AS month,
                count(*)::int AS count
         FROM "visits"
-        WHERE "visitDate" >= ${start} AND "status" = 'COMPLETED' ${visitAgentFilter}
+        WHERE "visitDate" >= ${start} AND "status" = 'COMPLETED' AND "deletedAt" IS NULL ${visitAgentFilter}
         GROUP BY 1
       `),
       this.prisma.$queryRaw<MonthCountRow[]>(Prisma.sql`
         SELECT to_char(date_trunc('month', "updatedAt"), 'YYYY-MM') AS month,
                count(*)::int AS count
         FROM "leads"
-        WHERE "updatedAt" >= ${start} AND "status" = 'WON' ${leadAgentFilter}
+        WHERE "updatedAt" >= ${start} AND "status" = 'WON' AND "deletedAt" IS NULL ${leadAgentFilter}
         GROUP BY 1
       `),
     ]);

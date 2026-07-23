@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, Property, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
@@ -9,6 +9,7 @@ import {
 } from '../../common/pagination/pagination.util';
 import { buildOrderBy } from '../../common/sorting/sorting.util';
 import { numericRange, searchAcross } from '../../common/filters/filter.util';
+import { withDeleted } from '../../common/prisma/soft-delete';
 import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
 import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreatePropertyDto } from '../dto/create-property.dto';
@@ -29,7 +30,7 @@ export class PropertiesService {
    */
   create(dto: CreatePropertyDto, userId: string): Promise<Property> {
     return this.prisma.property.create({
-      data: { ...dto, createdBy: userId },
+      data: { ...dto, createdBy: userId, createdById: userId },
       include: propertyInclude,
     });
   }
@@ -37,20 +38,30 @@ export class PropertiesService {
   /**
    * Lists properties with search, filtering, sorting and pagination.
    * Properties are viewable by any authenticated user (no ownership scoping).
+   * Admins may pass includeDeleted=true to also see soft-deleted properties.
    */
-  async findAll(query: QueryPropertiesDto): Promise<PaginatedResult<Property>> {
+  async findAll(
+    query: QueryPropertiesDto,
+    user: AuthenticatedUser,
+  ): Promise<PaginatedResult<Property>> {
     const { page, limit, sortBy, sortOrder } = query;
     const where = this.buildWhere(query);
+    const includeDeleted = user.role === Role.ADMIN && query.includeDeleted === true;
 
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.property.findMany({
-        where,
-        include: propertyInclude,
-        orderBy: buildOrderBy(sortBy, sortOrder),
-        skip: getSkip(page, limit),
-        take: limit,
-      }),
-      this.prisma.property.count({ where }),
+      this.prisma.property.findMany(
+        withDeleted(
+          {
+            where,
+            include: propertyInclude,
+            orderBy: buildOrderBy(sortBy, sortOrder),
+            skip: getSkip(page, limit),
+            take: limit,
+          },
+          includeDeleted,
+        ),
+      ),
+      this.prisma.property.count(withDeleted({ where }, includeDeleted)),
     ]);
 
     return { items, meta: buildPaginationMeta(page, limit, total) };
@@ -78,7 +89,7 @@ export class PropertiesService {
   }
 
   async findOne(id: string): Promise<Property> {
-    const property = await this.prisma.property.findUnique({
+    const property = await this.prisma.property.findFirst({
       where: { id },
       include: propertyInclude,
     });
@@ -96,17 +107,44 @@ export class PropertiesService {
 
     return this.prisma.property.update({
       where: { id },
-      data: dto,
+      data: { ...dto, updatedById: user.id },
       include: propertyInclude,
     });
   }
 
+  /**
+   * Soft delete: the row is kept and stamped with deletedAt / deletedById so it
+   * disappears from normal queries but can be restored. findOne already excludes
+   * soft-deleted rows, so deleting an already-deleted property returns 404.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<Property> {
     const property = await this.findOne(id);
     this.assertCanManage(property, user);
 
-    return this.prisma.property.delete({
+    return this.prisma.property.update({
       where: { id },
+      data: { deletedAt: new Date(), deletedById: user.id },
+      include: propertyInclude,
+    });
+  }
+
+  /** Restores a soft-deleted property (owner or admin). */
+  async restore(id: string, user: AuthenticatedUser): Promise<Property> {
+    const property = await this.prisma.property.findFirst(
+      withDeleted({ where: { id }, include: propertyInclude }, true),
+    );
+
+    if (!property) {
+      throw new ResourceNotFoundException('Property', id);
+    }
+    this.assertCanManage(property, user);
+    if (!property.deletedAt) {
+      throw new BadRequestException('Property is not deleted');
+    }
+
+    return this.prisma.property.update({
+      where: { id },
+      data: { deletedAt: null, deletedById: null, updatedById: user.id },
       include: propertyInclude,
     });
   }

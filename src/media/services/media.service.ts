@@ -44,6 +44,7 @@ export class MediaService {
             width: result.width ?? null,
             height: result.height ?? null,
             createdBy: userId,
+            createdById: userId,
           },
         });
       }),
@@ -138,7 +139,7 @@ export class MediaService {
 
   /** Deletes media from the storage provider and the database (owner or admin). */
   async remove(id: string, user: AuthenticatedUser): Promise<Media> {
-    const media = await this.prisma.media.findUnique({ where: { id } });
+    const media = await this.prisma.media.findFirst({ where: { id } });
     if (!media) {
       throw new ResourceNotFoundException('Media', id);
     }
@@ -149,7 +150,7 @@ export class MediaService {
   }
 
   private async ensurePropertyExists(propertyId: string): Promise<void> {
-    const property = await this.prisma.property.findUnique({
+    const property = await this.prisma.property.findFirst({
       where: { id: propertyId },
       select: { id: true },
     });

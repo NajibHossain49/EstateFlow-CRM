@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Client, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
@@ -13,6 +13,7 @@ import {
   numericRange,
   searchAcross,
 } from '../../common/filters/filter.util';
+import { withDeleted } from '../../common/prisma/soft-delete';
 import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
 import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreateClientDto } from '../dto/create-client.dto';
@@ -33,7 +34,7 @@ export class ClientsService {
    */
   create(dto: CreateClientDto, userId: string): Promise<Client> {
     return this.prisma.client.create({
-      data: { ...dto, createdBy: userId },
+      data: { ...dto, createdBy: userId, createdById: userId },
       include: clientInclude,
     });
   }
@@ -41,20 +42,27 @@ export class ClientsService {
   /**
    * Lists clients with search, filtering, sorting and pagination.
    * Admins see all clients; agents see only the clients they created.
+   * Admins may pass includeDeleted=true to also see soft-deleted clients.
    */
   async findAll(query: QueryClientsDto, user: AuthenticatedUser): Promise<PaginatedResult<Client>> {
     const { page, limit, sortBy, sortOrder } = query;
     const where = this.buildWhere(query, user);
+    const includeDeleted = user.role === Role.ADMIN && query.includeDeleted === true;
 
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.client.findMany({
-        where,
-        include: clientInclude,
-        orderBy: buildOrderBy(sortBy, sortOrder),
-        skip: getSkip(page, limit),
-        take: limit,
-      }),
-      this.prisma.client.count({ where }),
+      this.prisma.client.findMany(
+        withDeleted(
+          {
+            where,
+            include: clientInclude,
+            orderBy: buildOrderBy(sortBy, sortOrder),
+            skip: getSkip(page, limit),
+            take: limit,
+          },
+          includeDeleted,
+        ),
+      ),
+      this.prisma.client.count(withDeleted({ where }, includeDeleted)),
     ]);
 
     return { items, meta: buildPaginationMeta(page, limit, total) };
@@ -81,7 +89,7 @@ export class ClientsService {
   }
 
   async findOne(id: string, user: AuthenticatedUser): Promise<Client> {
-    const client = await this.prisma.client.findUnique({
+    const client = await this.prisma.client.findFirst({
       where: { id },
       include: clientInclude,
     });
@@ -99,16 +107,39 @@ export class ClientsService {
 
     return this.prisma.client.update({
       where: { id },
-      data: dto,
+      data: { ...dto, updatedById: user.id },
       include: clientInclude,
     });
   }
 
+  /** Soft delete: stamps deletedAt / deletedById instead of removing the row. */
   async remove(id: string, user: AuthenticatedUser): Promise<Client> {
     await this.findOne(id, user);
 
-    return this.prisma.client.delete({
+    return this.prisma.client.update({
       where: { id },
+      data: { deletedAt: new Date(), deletedById: user.id },
+      include: clientInclude,
+    });
+  }
+
+  /** Restores a soft-deleted client (owner or admin). */
+  async restore(id: string, user: AuthenticatedUser): Promise<Client> {
+    const client = await this.prisma.client.findFirst(
+      withDeleted({ where: { id }, include: clientInclude }, true),
+    );
+
+    if (!client) {
+      throw new ResourceNotFoundException('Client', id);
+    }
+    this.assertCanManage(client, user);
+    if (!client.deletedAt) {
+      throw new BadRequestException('Client is not deleted');
+    }
+
+    return this.prisma.client.update({
+      where: { id },
+      data: { deletedAt: null, deletedById: null, updatedById: user.id },
       include: clientInclude,
     });
   }

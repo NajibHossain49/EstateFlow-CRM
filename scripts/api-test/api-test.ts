@@ -1278,6 +1278,186 @@ async function run(): Promise<void> {
   pass('Lead deleted');
 
   // ---------------------------------------------------------------------------
+  // Soft delete, audit tracking & transaction verification.
+  //
+  // Uses the seeded admin account (admin@estateflow.com) because includeDeleted
+  // is honoured for admins only, and admins can view every property regardless
+  // of owner. Runs before the rate-limit probe so the extra login is safe.
+  // ---------------------------------------------------------------------------
+  const adminLoginRes = await client.post('/auth/login', {
+    email: 'admin@estateflow.com',
+    password: 'Password123!',
+  });
+  assert(
+    adminLoginRes.status === 200 || adminLoginRes.status === 201,
+    `Admin login failed (is the database seeded with admin@estateflow.com?): HTTP ${adminLoginRes.status} - ${JSON.stringify(
+      adminLoginRes.data,
+    )}`,
+  );
+  const adminToken: string | undefined =
+    adminLoginRes.data?.data?.accessToken ?? adminLoginRes.data?.data?.token;
+  assert(Boolean(adminToken), 'Admin login response did not contain an access token');
+  const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+
+  // 1. Create property -> createdById audit field is populated.
+  const auditCreateRes = await client.post('/properties', testProperty, { headers: adminHeaders });
+  assert(
+    auditCreateRes.status === 201 || auditCreateRes.status === 200,
+    `Audit create failed: POST /properties -> HTTP ${auditCreateRes.status} - ${JSON.stringify(
+      auditCreateRes.data,
+    )}`,
+  );
+  const auditPropertyId: string | undefined = auditCreateRes.data?.data?.id;
+  assert(Boolean(auditPropertyId), 'Audit property create did not return an id');
+  assert(
+    Boolean(auditCreateRes.data?.data?.createdById),
+    'Created property is missing the createdById audit field',
+  );
+  pass('Property audit created');
+
+  // 2. Update property -> updatedById audit field is populated.
+  const auditUpdateRes = await client.patch(
+    `/properties/${auditPropertyId}`,
+    { status: 'SOLD' },
+    { headers: adminHeaders },
+  );
+  assert(
+    auditUpdateRes.status === 200,
+    `Audit update failed: PATCH /properties/${auditPropertyId} -> HTTP ${auditUpdateRes.status}`,
+  );
+  assert(
+    Boolean(auditUpdateRes.data?.data?.updatedById),
+    'Updated property is missing the updatedById audit field',
+  );
+  pass('Property audit updated');
+
+  // 3. Soft delete -> succeeds and the property disappears from normal reads.
+  const softDeleteRes = await client.delete(`/properties/${auditPropertyId}`, {
+    headers: adminHeaders,
+  });
+  assert(
+    softDeleteRes.status === 200 || softDeleteRes.status === 204,
+    `Soft delete failed: DELETE /properties/${auditPropertyId} -> HTTP ${softDeleteRes.status}`,
+  );
+  const getAfterDeleteRes = await client.get(`/properties/${auditPropertyId}`, {
+    headers: adminHeaders,
+  });
+  assert(
+    getAfterDeleteRes.status === 404,
+    `Soft-deleted property should return 404 from a normal GET (got HTTP ${getAfterDeleteRes.status})`,
+  );
+  pass('Property soft delete verified');
+
+  // 4. includeDeleted=true (admin) -> the soft-deleted property is returned.
+  const includeDeletedUrl = '/properties?limit=100&includeDeleted=true';
+  const includeDeletedRes = await client.get(includeDeletedUrl, { headers: adminHeaders });
+  assert(
+    includeDeletedRes.status === 200,
+    `includeDeleted list failed: GET ${includeDeletedUrl} -> HTTP ${includeDeletedRes.status}`,
+  );
+  const deletedList: Array<{ id: string }> = includeDeletedRes.data?.data ?? [];
+  assert(
+    deletedList.some((p) => p.id === auditPropertyId),
+    'includeDeleted=true did not return the soft-deleted property',
+  );
+  pass('Deleted records retrieval verified');
+
+  // 5. Restore -> deletedAt becomes null and the property is readable again.
+  const restoreRes = await client.patch(
+    `/properties/${auditPropertyId}/restore`,
+    {},
+    { headers: adminHeaders },
+  );
+  assert(
+    restoreRes.status === 200,
+    `Restore failed: PATCH /properties/${auditPropertyId}/restore -> HTTP ${restoreRes.status} - ${JSON.stringify(
+      restoreRes.data,
+    )}`,
+  );
+  assert(
+    restoreRes.data?.data?.deletedAt === null,
+    'Restored property deletedAt is not null',
+  );
+  pass('Property restore verified');
+
+  // Clean up the audit/restore property.
+  await client.delete(`/properties/${auditPropertyId}`, { headers: adminHeaders });
+
+  // 6. Transaction verification — Lead + LEAD_CREATED activity are atomic.
+  const txLeadRes = await client.post('/leads', testLead, { headers: adminHeaders });
+  assert(
+    txLeadRes.status === 201 || txLeadRes.status === 200,
+    `Transaction lead create failed: POST /leads -> HTTP ${txLeadRes.status} - ${JSON.stringify(
+      txLeadRes.data,
+    )}`,
+  );
+  const txLeadId: string | undefined = txLeadRes.data?.data?.id;
+  assert(Boolean(txLeadId), 'Transaction lead create did not return an id');
+  const leadActivitiesRes = await client.get(`/leads/${txLeadId}/activities`, {
+    headers: adminHeaders,
+  });
+  assert(
+    leadActivitiesRes.status === 200,
+    `Get lead activities failed: HTTP ${leadActivitiesRes.status}`,
+  );
+  const leadActivities: Array<{ type?: string }> = leadActivitiesRes.data?.data ?? [];
+  assert(
+    leadActivities.some((a) => a.type === 'LEAD_CREATED'),
+    'Lead creation did not atomically record a LEAD_CREATED activity',
+  );
+  pass('Lead transaction verified');
+
+  // Visit + VISIT_CREATED activity are atomic (needs a client and a property).
+  const txClientRes = await client.post('/clients', testClient, { headers: adminHeaders });
+  const txClientId: string | undefined = txClientRes.data?.data?.id;
+  assert(Boolean(txClientId), 'Transaction client create did not return an id');
+  const txPropertyRes = await client.post('/properties', testProperty, { headers: adminHeaders });
+  const txPropertyId: string | undefined = txPropertyRes.data?.data?.id;
+  assert(Boolean(txPropertyId), 'Transaction property create did not return an id');
+
+  const txVisitRes = await client.post(
+    '/visits',
+    {
+      clientId: txClientId,
+      propertyId: txPropertyId,
+      leadId: txLeadId,
+      visitDate: '2026-09-01T10:00:00.000Z',
+      status: 'COMPLETED',
+    },
+    { headers: adminHeaders },
+  );
+  assert(
+    txVisitRes.status === 201 || txVisitRes.status === 200,
+    `Transaction visit create failed: POST /visits -> HTTP ${txVisitRes.status} - ${JSON.stringify(
+      txVisitRes.data,
+    )}`,
+  );
+  const txVisitId: string | undefined = txVisitRes.data?.data?.id;
+  assert(Boolean(txVisitId), 'Transaction visit create did not return an id');
+  const leadActivitiesAfterVisitRes = await client.get(`/leads/${txLeadId}/activities`, {
+    headers: adminHeaders,
+  });
+  const leadActivitiesAfterVisit: Array<{ type?: string }> =
+    leadActivitiesAfterVisitRes.data?.data ?? [];
+  assert(
+    leadActivitiesAfterVisit.some((a) => a.type === 'VISIT_CREATED'),
+    'Visit creation did not atomically record a VISIT_CREATED activity',
+  );
+  pass('Visit transaction verified');
+
+  // Clean up the transaction fixtures.
+  await client.delete(`/visits/${txVisitId}`, { headers: adminHeaders });
+  await client.delete(`/leads/${txLeadId}`, { headers: adminHeaders });
+  await client.delete(`/clients/${txClientId}`, { headers: adminHeaders });
+  await client.delete(`/properties/${txPropertyId}`, { headers: adminHeaders });
+
+  // Section summary lines.
+  pass('Audit fields verified');
+  pass('Soft delete verified');
+  pass('Restore verified');
+  pass('Transaction verified');
+
+  // ---------------------------------------------------------------------------
   // Security hardening verification: health endpoint, Helmet headers and the
   // per-route rate limiter. Run last so the rate-limit probe cannot interfere
   // with the earlier login/register steps.

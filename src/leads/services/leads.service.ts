@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ActivityType, Lead, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivitiesService } from '../../activities/services/activities.service';
@@ -10,6 +10,7 @@ import {
 } from '../../common/pagination/pagination.util';
 import { buildOrderBy } from '../../common/sorting/sorting.util';
 import { caseInsensitiveContains, dateRange, searchAcross } from '../../common/filters/filter.util';
+import { withDeleted } from '../../common/prisma/soft-delete';
 import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
 import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreateLeadDto } from '../dto/create-lead.dto';
@@ -30,41 +31,56 @@ export class LeadsService {
   /**
    * Creates a lead assigned to the current user by default. assignedAgentId is
    * always derived from the authenticated user and never accepted from the client.
-   * Records a LEAD_CREATED activity on the lead timeline.
+   *
+   * The lead row and its LEAD_CREATED activity are written inside a single
+   * interactive transaction, so either both persist or neither does (the audit
+   * timeline can never diverge from the lead it describes).
    */
   async create(dto: CreateLeadDto, userId: string): Promise<Lead> {
-    const lead = await this.prisma.lead.create({
-      data: { ...dto, assignedAgentId: userId },
-      include: leadInclude,
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.create({
+        data: { ...dto, assignedAgentId: userId, createdById: userId },
+        include: leadInclude,
+      });
 
-    await this.activities.record({
-      type: ActivityType.LEAD_CREATED,
-      description: 'Lead created',
-      createdBy: userId,
-      leadId: lead.id,
-    });
+      await this.activities.record(
+        {
+          type: ActivityType.LEAD_CREATED,
+          description: 'Lead created',
+          createdBy: userId,
+          leadId: lead.id,
+        },
+        tx,
+      );
 
-    return lead;
+      return lead;
+    });
   }
 
   /**
    * Lists leads with search, filtering, sorting and pagination.
    * Admins see all leads; agents see only the leads assigned to them.
+   * Admins may pass includeDeleted=true to also see soft-deleted leads.
    */
   async findAll(query: QueryLeadsDto, user: AuthenticatedUser): Promise<PaginatedResult<Lead>> {
     const { page, limit, sortBy, sortOrder } = query;
     const where = this.buildWhere(query, user);
+    const includeDeleted = user.role === Role.ADMIN && query.includeDeleted === true;
 
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.lead.findMany({
-        where,
-        include: leadInclude,
-        orderBy: buildOrderBy(sortBy, sortOrder),
-        skip: getSkip(page, limit),
-        take: limit,
-      }),
-      this.prisma.lead.count({ where }),
+      this.prisma.lead.findMany(
+        withDeleted(
+          {
+            where,
+            include: leadInclude,
+            orderBy: buildOrderBy(sortBy, sortOrder),
+            skip: getSkip(page, limit),
+            take: limit,
+          },
+          includeDeleted,
+        ),
+      ),
+      this.prisma.lead.count(withDeleted({ where }, includeDeleted)),
     ]);
 
     return { items, meta: buildPaginationMeta(page, limit, total) };
@@ -97,7 +113,7 @@ export class LeadsService {
   }
 
   async findOne(id: string, user: AuthenticatedUser): Promise<Lead> {
-    const lead = await this.prisma.lead.findUnique({
+    const lead = await this.prisma.lead.findFirst({
       where: { id },
       include: leadInclude,
     });
@@ -115,7 +131,7 @@ export class LeadsService {
 
     const updated = await this.prisma.lead.update({
       where: { id },
-      data: dto,
+      data: { ...dto, updatedById: user.id },
       include: leadInclude,
     });
 
@@ -139,11 +155,34 @@ export class LeadsService {
     return updated;
   }
 
+  /** Soft delete: stamps deletedAt / deletedById instead of removing the row. */
   async remove(id: string, user: AuthenticatedUser): Promise<Lead> {
     await this.findOne(id, user);
 
-    return this.prisma.lead.delete({
+    return this.prisma.lead.update({
       where: { id },
+      data: { deletedAt: new Date(), deletedById: user.id },
+      include: leadInclude,
+    });
+  }
+
+  /** Restores a soft-deleted lead (assigned agent or admin). */
+  async restore(id: string, user: AuthenticatedUser): Promise<Lead> {
+    const lead = await this.prisma.lead.findFirst(
+      withDeleted({ where: { id }, include: leadInclude }, true),
+    );
+
+    if (!lead) {
+      throw new ResourceNotFoundException('Lead', id);
+    }
+    this.assertCanManage(lead, user);
+    if (!lead.deletedAt) {
+      throw new BadRequestException('Lead is not deleted');
+    }
+
+    return this.prisma.lead.update({
+      where: { id },
+      data: { deletedAt: null, deletedById: null, updatedById: user.id },
       include: leadInclude,
     });
   }

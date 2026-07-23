@@ -1,4 +1,6 @@
-import { IntersectionType } from '@nestjs/swagger';
+import { ApiPropertyOptional, IntersectionType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsOptional } from 'class-validator';
 import { PaginationQueryDto } from '../pagination/pagination-query.dto';
 import { SortQueryDto } from '../sorting/sort-query.dto';
 import { SearchQueryDto } from './search-query.dto';
@@ -13,4 +15,15 @@ import { SearchQueryDto } from './search-query.dto';
 export class ListQueryDto extends IntersectionType(
   PaginationQueryDto,
   IntersectionType(SortQueryDto, SearchQueryDto),
-) {}
+) {
+  @ApiPropertyOptional({
+    description:
+      'Admins only: include soft-deleted records in the results. Ignored for non-admin users.',
+    default: false,
+    example: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  includeDeleted?: boolean;
+}

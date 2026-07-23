@@ -66,8 +66,15 @@ export class LeadsController {
 
   @Delete(':id')
   @ResponseMessage('Lead deleted successfully')
-  @ApiOperation({ summary: 'Delete a lead (assigned agent or admin)' })
+  @ApiOperation({ summary: 'Soft-delete a lead (assigned agent or admin)' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.leadsService.remove(id, user);
+  }
+
+  @Patch(':id/restore')
+  @ResponseMessage('Lead restored successfully')
+  @ApiOperation({ summary: 'Restore a soft-deleted lead (assigned agent or admin)' })
+  restore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.leadsService.restore(id, user);
   }
 }

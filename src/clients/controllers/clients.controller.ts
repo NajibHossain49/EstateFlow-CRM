@@ -66,8 +66,15 @@ export class ClientsController {
 
   @Delete(':id')
   @ResponseMessage('Client deleted successfully')
-  @ApiOperation({ summary: 'Delete a client (owner or admin)' })
+  @ApiOperation({ summary: 'Soft-delete a client (owner or admin)' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.clientsService.remove(id, user);
+  }
+
+  @Patch(':id/restore')
+  @ResponseMessage('Client restored successfully')
+  @ApiOperation({ summary: 'Restore a soft-deleted client (owner or admin)' })
+  restore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.clientsService.restore(id, user);
   }
 }
