@@ -1,4 +1,4 @@
-import axios, { AxiosError, AxiosInstance } from 'axios';
+import axios, { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
 
 /**
  * Automated API smoke test for the EstateFlow CRM backend.
@@ -83,6 +83,77 @@ function assert(condition: boolean, message: string): void {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+interface ListMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+type ListItem = Record<string, unknown>;
+
+/**
+ * Validates the shared paginated list envelope and returns the parsed items/meta.
+ * Checks: HTTP 200, a data.items array, a data.meta object containing every
+ * pagination key, and that totalPages / hasNextPage / hasPreviousPage are
+ * internally consistent with page, limit and total.
+ */
+function assertPaginated(
+  label: string,
+  endpoint: string,
+  res: AxiosResponse,
+): { items: ListItem[]; meta: ListMeta } {
+  assert(
+    res.status === 200,
+    `${label} failed: GET ${endpoint} -> HTTP ${res.status} - ${JSON.stringify(res.data)}`,
+  );
+
+  const payload = res.data?.data;
+  assert(
+    Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload),
+    `${label}: response data is not the { items, meta } envelope`,
+  );
+
+  const items: ListItem[] = payload?.items ?? [];
+  const meta: ListMeta = payload?.meta ?? ({} as ListMeta);
+  assert(Array.isArray(items), `${label}: data.items is not an array`);
+  assert(
+    Boolean(payload?.meta) && typeof payload?.meta === 'object',
+    `${label}: data.meta object is missing`,
+  );
+
+  const requiredKeys = [
+    'page',
+    'limit',
+    'total',
+    'totalPages',
+    'hasNextPage',
+    'hasPreviousPage',
+  ] as const;
+  for (const key of requiredKeys) {
+    assert(meta[key] !== undefined, `${label}: meta is missing "${key}"`);
+  }
+
+  const expectedTotalPages = meta.total === 0 ? 0 : Math.ceil(meta.total / meta.limit);
+  assert(
+    meta.totalPages === expectedTotalPages,
+    `${label}: meta.totalPages (${meta.totalPages}) != expected (${expectedTotalPages})`,
+  );
+  assert(
+    meta.hasNextPage === meta.page < meta.totalPages,
+    `${label}: meta.hasNextPage is inconsistent with page/totalPages`,
+  );
+  assert(
+    meta.hasPreviousPage === meta.page > 1,
+    `${label}: meta.hasPreviousPage is inconsistent with page`,
+  );
+  assert(items.length <= meta.limit, `${label}: page returned more items than the requested limit`);
+
+  return { items, meta };
 }
 
 async function run(): Promise<void> {
@@ -582,6 +653,276 @@ async function run(): Promise<void> {
     'A monthly summary entry is missing expected fields (month, newLeads, completedVisits, wonDeals)',
   );
   pass('Monthly summary verified');
+
+  // ---------------------------------------------------------------------------
+  // Search, Filter, Sorting and Pagination. Runs while the created property,
+  // client, lead and visit still exist. Every list response is validated by
+  // assertPaginated (200 + items array + consistent meta object).
+  // ---------------------------------------------------------------------------
+
+  // The agent id backing the created records (used for the "agent" filters).
+  const agentId: string = createLeadRes.data?.data?.assignedAgentId;
+
+  // --- Properties: search ---
+  const propSearchUrl = '/properties?search=Modern';
+  const propSearch = assertPaginated(
+    'Property search',
+    propSearchUrl,
+    await client.get(propSearchUrl, { headers: authHeaders }),
+  );
+  assert(
+    propSearch.items.every((p) =>
+      `${String(p.title)} ${String(p.description)} ${String(p.location)}`
+        .toLowerCase()
+        .includes('modern'),
+    ),
+    'Property search returned an item not matching the search term',
+  );
+  pass('Property search verified');
+
+  // --- Properties: filter by status, propertyType, price range, bedrooms ---
+  const propStatusUrl = '/properties?status=SOLD';
+  const propByStatus = assertPaginated(
+    'Property status filter',
+    propStatusUrl,
+    await client.get(propStatusUrl, { headers: authHeaders }),
+  );
+  assert(
+    propByStatus.items.every((p) => p.status === 'SOLD'),
+    'Property status filter returned a property that is not SOLD',
+  );
+
+  const propTypeUrl = '/properties?propertyType=APARTMENT';
+  const propByType = assertPaginated(
+    'Property type filter',
+    propTypeUrl,
+    await client.get(propTypeUrl, { headers: authHeaders }),
+  );
+  assert(
+    propByType.items.every((p) => p.propertyType === 'APARTMENT'),
+    'Property type filter returned a non-APARTMENT property',
+  );
+
+  const propPriceUrl = '/properties?minPrice=1000000&maxPrice=9000000';
+  const propByPrice = assertPaginated(
+    'Property price range',
+    propPriceUrl,
+    await client.get(propPriceUrl, { headers: authHeaders }),
+  );
+  assert(
+    propByPrice.items.every((p) => {
+      const price = Number(p.price);
+      return price >= 1000000 && price <= 9000000;
+    }),
+    'Property price range returned a property outside the requested range',
+  );
+
+  const propBedsUrl = '/properties?minBedrooms=2&maxBedrooms=3';
+  const propByBeds = assertPaginated(
+    'Property bedrooms filter',
+    propBedsUrl,
+    await client.get(propBedsUrl, { headers: authHeaders }),
+  );
+  assert(
+    propByBeds.items.every((p) => {
+      const bedrooms = Number(p.bedrooms);
+      return bedrooms >= 2 && bedrooms <= 3;
+    }),
+    'Property bedrooms filter returned a property outside the requested range',
+  );
+  pass('Property filter verified');
+
+  // --- Properties: sorting ascending and descending ---
+  const propAscUrl = '/properties?sortBy=price&sortOrder=asc&limit=100';
+  const propAsc = assertPaginated(
+    'Property sort ascending',
+    propAscUrl,
+    await client.get(propAscUrl, { headers: authHeaders }),
+  );
+  const ascPrices = propAsc.items.map((p) => Number(p.price));
+  assert(
+    ascPrices.every((price, i) => i === 0 || ascPrices[i - 1] <= price),
+    'Properties are not sorted by price ascending',
+  );
+
+  const propDescUrl = '/properties?sortBy=price&sortOrder=desc&limit=100';
+  const propDesc = assertPaginated(
+    'Property sort descending',
+    propDescUrl,
+    await client.get(propDescUrl, { headers: authHeaders }),
+  );
+  const descPrices = propDesc.items.map((p) => Number(p.price));
+  assert(
+    descPrices.every((price, i) => i === 0 || descPrices[i - 1] >= price),
+    'Properties are not sorted by price descending',
+  );
+  pass('Property sorting verified');
+
+  // --- Properties: pagination ---
+  const propPage1Url = '/properties?page=1&limit=2';
+  const propPage1 = assertPaginated(
+    'Property pagination',
+    propPage1Url,
+    await client.get(propPage1Url, { headers: authHeaders }),
+  );
+  assert(
+    propPage1.meta.page === 1 && propPage1.meta.limit === 2,
+    'Property pagination meta page/limit are incorrect',
+  );
+  if (propPage1.meta.totalPages > 1) {
+    const propPage2Url = '/properties?page=2&limit=2';
+    const propPage2 = assertPaginated(
+      'Property pagination (page 2)',
+      propPage2Url,
+      await client.get(propPage2Url, { headers: authHeaders }),
+    );
+    assert(
+      propPage2.meta.page === 2 && propPage2.meta.hasPreviousPage === true,
+      'Property page 2 should report hasPreviousPage = true',
+    );
+  }
+  pass('Property pagination verified');
+
+  // --- Clients: search ---
+  const clientSearchUrl = '/clients?search=Test';
+  const clientSearch = assertPaginated(
+    'Client search',
+    clientSearchUrl,
+    await client.get(clientSearchUrl, { headers: authHeaders }),
+  );
+  assert(clientSearch.meta.total >= 1, 'Client search for "Test" should match the created client');
+  pass('Client search verified');
+
+  // --- Clients: budget filter, preferred location filter, pagination ---
+  const clientBudgetUrl = '/clients?minBudget=1000000&maxBudget=9000000';
+  const clientByBudget = assertPaginated(
+    'Client budget filter',
+    clientBudgetUrl,
+    await client.get(clientBudgetUrl, { headers: authHeaders }),
+  );
+  assert(
+    clientByBudget.items.every((c) => {
+      const budget = Number(c.budget);
+      return budget >= 1000000 && budget <= 9000000;
+    }),
+    'Client budget filter returned a client outside the requested range',
+  );
+
+  const clientLocationUrl = '/clients?preferredLocation=Gulshan';
+  const clientByLocation = assertPaginated(
+    'Client preferred location filter',
+    clientLocationUrl,
+    await client.get(clientLocationUrl, { headers: authHeaders }),
+  );
+  assert(
+    clientByLocation.items.every((c) =>
+      String(c.preferredLocation).toLowerCase().includes('gulshan'),
+    ),
+    'Client location filter returned a client with a different preferred location',
+  );
+
+  const clientPageUrl = '/clients?page=1&limit=2';
+  const clientPage = assertPaginated(
+    'Client pagination',
+    clientPageUrl,
+    await client.get(clientPageUrl, { headers: authHeaders }),
+  );
+  assert(clientPage.meta.limit === 2, 'Client pagination meta limit is incorrect');
+  pass('Client filtering verified');
+
+  // --- Leads: status, source, agent, date range, pagination ---
+  const leadStatusUrl = '/leads?status=INTERESTED';
+  const leadByStatus = assertPaginated(
+    'Lead status filter',
+    leadStatusUrl,
+    await client.get(leadStatusUrl, { headers: authHeaders }),
+  );
+  assert(leadByStatus.meta.total >= 1, 'Lead status filter should include the updated lead');
+  assert(
+    leadByStatus.items.every((l) => l.status === 'INTERESTED'),
+    'Lead status filter returned a lead with a different status',
+  );
+
+  const leadSourceUrl = '/leads?source=facebook';
+  const leadBySource = assertPaginated(
+    'Lead source filter',
+    leadSourceUrl,
+    await client.get(leadSourceUrl, { headers: authHeaders }),
+  );
+  assert(
+    leadBySource.items.every((l) => String(l.source).toLowerCase().includes('facebook')),
+    'Lead source filter returned a lead from a different source',
+  );
+
+  const leadAgentUrl = `/leads?assignedAgent=${agentId}`;
+  const leadByAgent = assertPaginated(
+    'Lead agent filter',
+    leadAgentUrl,
+    await client.get(leadAgentUrl, { headers: authHeaders }),
+  );
+  assert(
+    leadByAgent.items.every((l) => l.assignedAgentId === agentId),
+    'Lead agent filter returned a lead assigned to a different agent',
+  );
+
+  const leadDateUrl =
+    '/leads?createdFrom=2000-01-01T00:00:00.000Z&createdTo=2100-01-01T00:00:00.000Z';
+  const leadByDate = assertPaginated(
+    'Lead date range filter',
+    leadDateUrl,
+    await client.get(leadDateUrl, { headers: authHeaders }),
+  );
+  assert(leadByDate.meta.total >= 1, 'Lead date range should include the created lead');
+
+  const leadPageUrl = '/leads?page=1&limit=2';
+  const leadPage = assertPaginated(
+    'Lead pagination',
+    leadPageUrl,
+    await client.get(leadPageUrl, { headers: authHeaders }),
+  );
+  assert(leadPage.meta.limit === 2, 'Lead pagination meta limit is incorrect');
+  pass('Lead filtering verified');
+
+  // --- Visits: status, date range, agent, pagination ---
+  const visitStatusUrl = '/visits?status=COMPLETED';
+  const visitByStatus = assertPaginated(
+    'Visit status filter',
+    visitStatusUrl,
+    await client.get(visitStatusUrl, { headers: authHeaders }),
+  );
+  assert(visitByStatus.meta.total >= 1, 'Visit status filter should include the completed visit');
+  assert(
+    visitByStatus.items.every((v) => v.status === 'COMPLETED'),
+    'Visit status filter returned a visit with a different status',
+  );
+
+  const visitDateUrl = '/visits?fromDate=2000-01-01T00:00:00.000Z&toDate=2100-01-01T00:00:00.000Z';
+  const visitByDate = assertPaginated(
+    'Visit date range filter',
+    visitDateUrl,
+    await client.get(visitDateUrl, { headers: authHeaders }),
+  );
+  assert(visitByDate.meta.total >= 1, 'Visit date range should include the created visit');
+
+  const visitAgentUrl = `/visits?agentId=${agentId}`;
+  const visitByAgent = assertPaginated(
+    'Visit agent filter',
+    visitAgentUrl,
+    await client.get(visitAgentUrl, { headers: authHeaders }),
+  );
+  assert(
+    visitByAgent.items.every((v) => v.agentId === agentId),
+    'Visit agent filter returned a visit assigned to a different agent',
+  );
+
+  const visitPageUrl = '/visits?page=1&limit=2';
+  const visitPage = assertPaginated(
+    'Visit pagination',
+    visitPageUrl,
+    await client.get(visitPageUrl, { headers: authHeaders }),
+  );
+  assert(visitPage.meta.limit === 2, 'Visit pagination meta limit is incorrect');
+  pass('Visit filtering verified');
 
   // 25. Delete visit
   const deleteVisitRes = await client.delete(`/visits/${visitId}`, { headers: authHeaders });
