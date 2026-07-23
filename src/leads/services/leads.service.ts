@@ -1,9 +1,17 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ActivityType, Lead, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
-import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
+import {
+  PaginatedResult,
+  buildPaginationMeta,
+  getSkip,
+} from '../../common/pagination/pagination.util';
+import { buildOrderBy } from '../../common/sorting/sorting.util';
+import { caseInsensitiveContains, dateRange, searchAcross } from '../../common/filters/filter.util';
+import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
+import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreateLeadDto } from '../dto/create-lead.dto';
 import { QueryLeadsDto } from '../dto/query-leads.dto';
 import { UpdateLeadDto } from '../dto/update-lead.dto';
@@ -52,7 +60,7 @@ export class LeadsService {
       this.prisma.lead.findMany({
         where,
         include: leadInclude,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: buildOrderBy(sortBy, sortOrder),
         skip: getSkip(page, limit),
         take: limit,
       }),
@@ -70,27 +78,15 @@ export class LeadsService {
     if (status) {
       where.status = status;
     }
-    if (source) {
-      where.source = { contains: source, mode: 'insensitive' };
-    }
+    where.source = caseInsensitiveContains(source);
     if (assignedAgent) {
       where.assignedAgentId = assignedAgent;
     }
-    if (createdFrom || createdTo) {
-      where.createdAt = {
-        ...(createdFrom ? { gte: new Date(createdFrom) } : {}),
-        ...(createdTo ? { lte: new Date(createdTo) } : {}),
-      };
-    }
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { source: { contains: search, mode: 'insensitive' } },
-        { notes: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+    where.createdAt = dateRange(createdFrom, createdTo);
+    where.OR = searchAcross<Prisma.LeadWhereInput>(
+      ['name', 'phone', 'email', 'source', 'notes'],
+      search,
+    );
 
     // Ownership scope wins: agents only ever see leads assigned to them.
     if (user.role !== Role.ADMIN) {
@@ -107,7 +103,7 @@ export class LeadsService {
     });
 
     if (!lead) {
-      throw new NotFoundException(`Lead with id ${id} not found`);
+      throw new ResourceNotFoundException('Lead', id);
     }
 
     this.assertCanManage(lead, user);
@@ -154,7 +150,7 @@ export class LeadsService {
 
   private assertCanManage(lead: Lead, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && lead.assignedAgentId !== user.id) {
-      throw new ForbiddenException('You can only access leads assigned to you');
+      throw new ForbiddenActionException('You can only access leads assigned to you');
     }
   }
 }

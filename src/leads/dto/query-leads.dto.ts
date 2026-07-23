@@ -2,13 +2,13 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import { IsEnum } from 'class-validator';
 import { LeadStatus } from '@prisma/client';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListQueryDto } from '../../common/filters/list-query.dto';
 
 export const LEAD_SORT_FIELDS = ['createdAt', 'updatedAt', 'name', 'status'] as const;
 
 export type LeadSortField = (typeof LEAD_SORT_FIELDS)[number];
 
-export class QueryLeadsDto extends PaginationQueryDto {
+export class QueryLeadsDto extends ListQueryDto {
   @ApiPropertyOptional({
     enum: LEAD_SORT_FIELDS,
     default: 'createdAt',

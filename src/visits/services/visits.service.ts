@@ -1,14 +1,18 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ActivityType, Prisma, Role, Visit, VisitStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
-import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
+import {
+  PaginatedResult,
+  buildPaginationMeta,
+  getSkip,
+} from '../../common/pagination/pagination.util';
+import { buildOrderBy } from '../../common/sorting/sorting.util';
+import { caseInsensitiveContains, dateRange } from '../../common/filters/filter.util';
+import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
+import { InvalidReferenceException } from '../../common/exceptions/invalid-reference.exception';
+import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreateVisitDto } from '../dto/create-visit.dto';
 import { QueryVisitsDto } from '../dto/query-visits.dto';
 import { UpdateVisitDto } from '../dto/update-visit.dto';
@@ -83,7 +87,7 @@ export class VisitsService {
       this.prisma.visit.findMany({
         where,
         include: visitInclude,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: buildOrderBy(sortBy, sortOrder),
         skip: getSkip(page, limit),
         take: limit,
       }),
@@ -110,17 +114,12 @@ export class VisitsService {
     if (propertyId) {
       where.propertyId = propertyId;
     }
-    if (fromDate || toDate) {
-      where.visitDate = {
-        ...(fromDate ? { gte: new Date(fromDate) } : {}),
-        ...(toDate ? { lte: new Date(toDate) } : {}),
-      };
-    }
+    where.visitDate = dateRange(fromDate, toDate);
     if (search) {
       where.OR = [
-        { notes: { contains: search, mode: 'insensitive' } },
-        { client: { name: { contains: search, mode: 'insensitive' } } },
-        { property: { title: { contains: search, mode: 'insensitive' } } },
+        { notes: caseInsensitiveContains(search) },
+        { client: { name: caseInsensitiveContains(search) } },
+        { property: { title: caseInsensitiveContains(search) } },
       ];
     }
 
@@ -139,7 +138,7 @@ export class VisitsService {
     });
 
     if (!visit) {
-      throw new NotFoundException(`Visit with id ${id} not found`);
+      throw new ResourceNotFoundException('Visit', id);
     }
 
     this.assertCanManage(visit, user);
@@ -198,7 +197,7 @@ export class VisitsService {
       select: { id: true },
     });
     if (!client) {
-      throw new BadRequestException(`Client with id ${clientId} does not exist`);
+      throw new InvalidReferenceException('Client', clientId);
     }
   }
 
@@ -208,7 +207,7 @@ export class VisitsService {
       select: { id: true },
     });
     if (!property) {
-      throw new BadRequestException(`Property with id ${propertyId} does not exist`);
+      throw new InvalidReferenceException('Property', propertyId);
     }
   }
 
@@ -218,13 +217,13 @@ export class VisitsService {
       select: { id: true },
     });
     if (!lead) {
-      throw new BadRequestException(`Lead with id ${leadId} does not exist`);
+      throw new InvalidReferenceException('Lead', leadId);
     }
   }
 
   private assertCanManage(visit: Visit, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && visit.agentId !== user.id) {
-      throw new ForbiddenException('You can only access visits assigned to you');
+      throw new ForbiddenActionException('You can only access visits assigned to you');
     }
   }
 }

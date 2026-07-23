@@ -7,6 +7,10 @@ export interface PaginationMeta {
   hasPreviousPage: boolean;
 }
 
+/**
+ * Value returned by paginated service methods. The response interceptor detects
+ * this shape and hoists `meta` to the top level of the envelope.
+ */
 export interface PaginatedResult<T> {
   items: T[];
   meta: PaginationMeta;
@@ -28,4 +32,21 @@ export function buildPaginationMeta(page: number, limit: number, total: number):
     hasNextPage: page < totalPages,
     hasPreviousPage: page > 1,
   };
+}
+
+/** Type guard used by the response interceptor to recognise a paginated result. */
+export function isPaginatedResult(value: unknown): value is PaginatedResult<unknown> {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as { items?: unknown; meta?: unknown };
+  const meta = candidate.meta as Partial<PaginationMeta> | undefined;
+  return (
+    Array.isArray(candidate.items) &&
+    !!meta &&
+    typeof meta === 'object' &&
+    typeof meta.page === 'number' &&
+    typeof meta.limit === 'number' &&
+    typeof meta.total === 'number'
+  );
 }

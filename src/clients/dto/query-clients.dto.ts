@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListQueryDto } from '../../common/filters/list-query.dto';
 
 export const CLIENT_SORT_FIELDS = [
   'createdAt',
@@ -12,7 +12,7 @@ export const CLIENT_SORT_FIELDS = [
 
 export type ClientSortField = (typeof CLIENT_SORT_FIELDS)[number];
 
-export class QueryClientsDto extends PaginationQueryDto {
+export class QueryClientsDto extends ListQueryDto {
   @ApiPropertyOptional({
     enum: CLIENT_SORT_FIELDS,
     default: 'createdAt',

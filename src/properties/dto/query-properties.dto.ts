@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsIn, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 import { PropertyStatus, PropertyType } from '@prisma/client';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListQueryDto } from '../../common/filters/list-query.dto';
 
 export const PROPERTY_SORT_FIELDS = [
   'createdAt',
@@ -15,7 +15,7 @@ export const PROPERTY_SORT_FIELDS = [
 
 export type PropertySortField = (typeof PROPERTY_SORT_FIELDS)[number];
 
-export class QueryPropertiesDto extends PaginationQueryDto {
+export class QueryPropertiesDto extends ListQueryDto {
   @ApiPropertyOptional({
     enum: PROPERTY_SORT_FIELDS,
     default: 'createdAt',

@@ -1,8 +1,16 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, Property, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
-import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
+import {
+  PaginatedResult,
+  buildPaginationMeta,
+  getSkip,
+} from '../../common/pagination/pagination.util';
+import { buildOrderBy } from '../../common/sorting/sorting.util';
+import { numericRange, searchAcross } from '../../common/filters/filter.util';
+import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
+import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreatePropertyDto } from '../dto/create-property.dto';
 import { QueryPropertiesDto } from '../dto/query-properties.dto';
 import { UpdatePropertyDto } from '../dto/update-property.dto';
@@ -38,7 +46,7 @@ export class PropertiesService {
       this.prisma.property.findMany({
         where,
         include: propertyInclude,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: buildOrderBy(sortBy, sortOrder),
         skip: getSkip(page, limit),
         take: limit,
       }),
@@ -59,25 +67,12 @@ export class PropertiesService {
     if (propertyType) {
       where.propertyType = propertyType;
     }
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      where.price = {
-        ...(minPrice !== undefined ? { gte: minPrice } : {}),
-        ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
-      };
-    }
-    if (minBedrooms !== undefined || maxBedrooms !== undefined) {
-      where.bedrooms = {
-        ...(minBedrooms !== undefined ? { gte: minBedrooms } : {}),
-        ...(maxBedrooms !== undefined ? { lte: maxBedrooms } : {}),
-      };
-    }
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { location: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+    where.price = numericRange(minPrice, maxPrice);
+    where.bedrooms = numericRange(minBedrooms, maxBedrooms);
+    where.OR = searchAcross<Prisma.PropertyWhereInput>(
+      ['title', 'description', 'location'],
+      search,
+    );
 
     return where;
   }
@@ -89,7 +84,7 @@ export class PropertiesService {
     });
 
     if (!property) {
-      throw new NotFoundException(`Property with id ${id} not found`);
+      throw new ResourceNotFoundException('Property', id);
     }
 
     return property;
@@ -121,7 +116,7 @@ export class PropertiesService {
    */
   private assertCanManage(property: Property, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && property.createdBy !== user.id) {
-      throw new ForbiddenException('You can only manage properties you created');
+      throw new ForbiddenActionException('You can only manage properties you created');
     }
   }
 }

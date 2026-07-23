@@ -1,13 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsDateString, IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { VisitStatus } from '@prisma/client';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListQueryDto } from '../../common/filters/list-query.dto';
 
 export const VISIT_SORT_FIELDS = ['visitDate', 'createdAt', 'updatedAt', 'status'] as const;
 
 export type VisitSortField = (typeof VISIT_SORT_FIELDS)[number];
 
-export class QueryVisitsDto extends PaginationQueryDto {
+export class QueryVisitsDto extends ListQueryDto {
   @ApiPropertyOptional({
     enum: VISIT_SORT_FIELDS,
     default: 'visitDate',

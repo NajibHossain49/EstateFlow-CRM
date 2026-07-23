@@ -1,8 +1,20 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Client, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
-import { PaginatedResult, buildPaginationMeta, getSkip } from '../../common/utils/pagination.util';
+import {
+  PaginatedResult,
+  buildPaginationMeta,
+  getSkip,
+} from '../../common/pagination/pagination.util';
+import { buildOrderBy } from '../../common/sorting/sorting.util';
+import {
+  caseInsensitiveContains,
+  numericRange,
+  searchAcross,
+} from '../../common/filters/filter.util';
+import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
+import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import { CreateClientDto } from '../dto/create-client.dto';
 import { QueryClientsDto } from '../dto/query-clients.dto';
 import { UpdateClientDto } from '../dto/update-client.dto';
@@ -38,7 +50,7 @@ export class ClientsService {
       this.prisma.client.findMany({
         where,
         include: clientInclude,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: buildOrderBy(sortBy, sortOrder),
         skip: getSkip(page, limit),
         take: limit,
       }),
@@ -53,23 +65,12 @@ export class ClientsService {
     const { search, preferredLocation, minBudget, maxBudget } = query;
     const where: Prisma.ClientWhereInput = {};
 
-    if (preferredLocation) {
-      where.preferredLocation = { contains: preferredLocation, mode: 'insensitive' };
-    }
-    if (minBudget !== undefined || maxBudget !== undefined) {
-      where.budget = {
-        ...(minBudget !== undefined ? { gte: minBudget } : {}),
-        ...(maxBudget !== undefined ? { lte: maxBudget } : {}),
-      };
-    }
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { preferredLocation: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+    where.preferredLocation = caseInsensitiveContains(preferredLocation);
+    where.budget = numericRange(minBudget, maxBudget);
+    where.OR = searchAcross<Prisma.ClientWhereInput>(
+      ['name', 'phone', 'email', 'preferredLocation'],
+      search,
+    );
 
     // Ownership scope wins: agents only ever see their own clients.
     if (user.role !== Role.ADMIN) {
@@ -86,7 +87,7 @@ export class ClientsService {
     });
 
     if (!client) {
-      throw new NotFoundException(`Client with id ${id} not found`);
+      throw new ResourceNotFoundException('Client', id);
     }
 
     this.assertCanManage(client, user);
@@ -114,7 +115,7 @@ export class ClientsService {
 
   private assertCanManage(client: Client, user: AuthenticatedUser): void {
     if (user.role !== Role.ADMIN && client.createdBy !== user.id) {
-      throw new ForbiddenException('You can only access clients you created');
+      throw new ForbiddenActionException('You can only access clients you created');
     }
   }
 }

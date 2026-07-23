@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
-import { ApiErrorResponse } from '../interfaces/api-response.interface';
+import { ApiErrorResponse } from '../responses/api-response.interface';
 
 /**
  * Global exception filter. Normalizes every thrown error into the standard

@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
+import * as path from 'path';
 
 /**
  * Automated API smoke test for the EstateFlow CRM backend.
@@ -98,7 +99,7 @@ type ListItem = Record<string, unknown>;
 
 /**
  * Validates the shared paginated list envelope and returns the parsed items/meta.
- * Checks: HTTP 200, a data.items array, a data.meta object containing every
+ * Checks: HTTP 200, a `data` array, a top-level `meta` object containing every
  * pagination key, and that totalPages / hasNextPage / hasPreviousPage are
  * internally consistent with page, limit and total.
  */
@@ -112,18 +113,12 @@ function assertPaginated(
     `${label} failed: GET ${endpoint} -> HTTP ${res.status} - ${JSON.stringify(res.data)}`,
   );
 
-  const payload = res.data?.data;
+  const items: ListItem[] = res.data?.data ?? [];
+  const meta: ListMeta = res.data?.meta ?? ({} as ListMeta);
+  assert(Array.isArray(items), `${label}: response "data" is not an array`);
   assert(
-    Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload),
-    `${label}: response data is not the { items, meta } envelope`,
-  );
-
-  const items: ListItem[] = payload?.items ?? [];
-  const meta: ListMeta = payload?.meta ?? ({} as ListMeta);
-  assert(Array.isArray(items), `${label}: data.items is not an array`);
-  assert(
-    Boolean(payload?.meta) && typeof payload?.meta === 'object',
-    `${label}: data.meta object is missing`,
+    Boolean(res.data?.meta) && typeof res.data?.meta === 'object',
+    `${label}: top-level "meta" object is missing`,
   );
 
   const requiredKeys = [
@@ -154,6 +149,53 @@ function assertPaginated(
   assert(items.length <= meta.limit, `${label}: page returned more items than the requested limit`);
 
   return { items, meta };
+}
+
+/**
+ * Exercises the exact `validateEnv` function the app runs at startup (compiled
+ * into dist/config/env.validation.js). Proves the config layer fails fast:
+ * throws when a required variable is missing and accepts a complete environment.
+ */
+function verifyEnvValidation(): void {
+  const projectRoot = path.resolve(__dirname, '..', '..');
+  const validatorPath = path.join(projectRoot, 'dist', 'config', 'env.validation.js');
+
+  // reflect-metadata mirrors the runtime the validator loads under in the app.
+  require('reflect-metadata');
+  const mod = require(validatorPath) as {
+    validateEnv: (config: Record<string, unknown>) => unknown;
+  };
+  assert(
+    typeof mod.validateEnv === 'function',
+    'Compiled validateEnv not found in dist/config/env.validation.js (run npm run build)',
+  );
+
+  // Missing required variables (DATABASE_URL / JWT_SECRET) must throw.
+  let threwOnMissing = false;
+  try {
+    mod.validateEnv({ NODE_ENV: 'test' });
+  } catch {
+    threwOnMissing = true;
+  }
+  assert(
+    threwOnMissing,
+    'Environment validation did not throw when required variables were missing',
+  );
+
+  // A complete, valid environment must pass without throwing.
+  let acceptedValid = true;
+  try {
+    mod.validateEnv({
+      NODE_ENV: 'test',
+      PORT: 3000,
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/estateflow',
+      JWT_SECRET: 'test-secret',
+      JWT_EXPIRES_IN: '1d',
+    });
+  } catch {
+    acceptedValid = false;
+  }
+  assert(acceptedValid, 'Environment validation rejected a valid environment');
 }
 
 async function run(): Promise<void> {
@@ -201,11 +243,11 @@ async function run(): Promise<void> {
   pass('Property created');
 
   // 4. Get all properties and verify the created one is present.
-  // The list endpoint is paginated: data = { items: [...], meta: {...} }.
+  // The list endpoint is paginated: data = [...items], with a top-level meta block.
   const listPropRes = await client.get('/properties', { headers: authHeaders });
   assert(listPropRes.status === 200, `Get properties failed: HTTP ${listPropRes.status}`);
-  const properties: Array<{ id: string }> = listPropRes.data?.data?.items ?? [];
-  assert(Array.isArray(properties), 'Properties response did not contain an items array');
+  const properties: Array<{ id: string }> = listPropRes.data?.data ?? [];
+  assert(Array.isArray(properties), 'Properties response data is not an array');
   assert(
     properties.some((p) => p.id === propertyId),
     'Created property was not found in the properties list',
@@ -238,11 +280,11 @@ async function run(): Promise<void> {
   assert(Boolean(clientId), 'Create client response did not contain an id');
   pass('Client created');
 
-  // 7. Get clients and verify the created one is present (paginated: data.items).
+  // 7. Get clients and verify the created one is present (paginated: data array + meta).
   const listClientRes = await client.get('/clients', { headers: authHeaders });
   assert(listClientRes.status === 200, `Get clients failed: HTTP ${listClientRes.status}`);
-  const clients: Array<{ id: string }> = listClientRes.data?.data?.items ?? [];
-  assert(Array.isArray(clients), 'Clients response did not contain an items array');
+  const clients: Array<{ id: string }> = listClientRes.data?.data ?? [];
+  assert(Array.isArray(clients), 'Clients response data is not an array');
   assert(
     clients.some((c) => c.id === clientId),
     'Created client was not found in the clients list',
@@ -291,8 +333,8 @@ async function run(): Promise<void> {
       listLeadRes.data,
     )}`,
   );
-  const leads: Array<{ id: string }> = listLeadRes.data?.data?.items ?? [];
-  assert(Array.isArray(leads), 'Leads response did not contain an items array');
+  const leads: Array<{ id: string }> = listLeadRes.data?.data ?? [];
+  assert(Array.isArray(leads), 'Leads response data is not an array');
   assert(
     leads.some((l) => l.id === leadId),
     'Created lead was not found in the leads list',
@@ -357,9 +399,8 @@ async function run(): Promise<void> {
       filterLeadRes.data,
     )}`,
   );
-  const filteredLeads: Array<{ id: string; status: string }> =
-    filterLeadRes.data?.data?.items ?? [];
-  assert(Array.isArray(filteredLeads), 'Filtered leads response did not contain an items array');
+  const filteredLeads: Array<{ id: string; status: string }> = filterLeadRes.data?.data ?? [];
+  assert(Array.isArray(filteredLeads), 'Filtered leads response data is not an array');
   assert(
     filteredLeads.some((l) => l.id === leadId),
     'Updated lead was not found when filtering by status=INTERESTED',
@@ -417,7 +458,7 @@ async function run(): Promise<void> {
   );
   pass('Activity ordering verified');
 
-  // 15. Get all visits and verify the created one is present (paginated: data.items).
+  // 15. Get all visits and verify the created one is present (paginated: data array + meta).
   const listVisitRes = await client.get('/visits', { headers: authHeaders });
   assert(
     listVisitRes.status === 200,
@@ -425,8 +466,8 @@ async function run(): Promise<void> {
       listVisitRes.data,
     )}`,
   );
-  const visits: Array<{ id: string }> = listVisitRes.data?.data?.items ?? [];
-  assert(Array.isArray(visits), 'Visits response did not contain an items array');
+  const visits: Array<{ id: string }> = listVisitRes.data?.data ?? [];
+  assert(Array.isArray(visits), 'Visits response data is not an array');
   assert(
     visits.some((v) => v.id === visitId),
     'Created visit was not found in the visits list',
@@ -473,9 +514,8 @@ async function run(): Promise<void> {
       filterVisitRes.data,
     )}`,
   );
-  const filteredVisits: Array<{ id: string; status: string }> =
-    filterVisitRes.data?.data?.items ?? [];
-  assert(Array.isArray(filteredVisits), 'Filtered visits response did not contain an items array');
+  const filteredVisits: Array<{ id: string; status: string }> = filterVisitRes.data?.data ?? [];
+  assert(Array.isArray(filteredVisits), 'Filtered visits response data is not an array');
   assert(
     filteredVisits.some((v) => v.id === visitId),
     'Updated visit was not found when filtering by status=COMPLETED',
@@ -923,6 +963,298 @@ async function run(): Promise<void> {
   );
   assert(visitPage.meta.limit === 2, 'Visit pagination meta limit is incorrect');
   pass('Visit filtering verified');
+
+  // ---------------------------------------------------------------------------
+  // Reports. Runs while the created business data still exists. Report
+  // responses use the standard { success, message, data } envelope (except the
+  // CSV export, which streams a raw text/csv body).
+  // ---------------------------------------------------------------------------
+
+  // Sales report
+  const salesReportRes = await client.get('/reports/sales', { headers: authHeaders });
+  assert(
+    salesReportRes.status === 200,
+    `Sales report failed: GET /reports/sales -> HTTP ${salesReportRes.status} - ${JSON.stringify(
+      salesReportRes.data,
+    )}`,
+  );
+  const salesReport = (salesReportRes.data?.data ?? {}) as {
+    totalDeals?: unknown;
+    totalRevenue?: unknown;
+    averageDealValue?: unknown;
+  };
+  assert(typeof salesReport.totalDeals === 'number', 'Sales report is missing totalDeals');
+  assert(typeof salesReport.totalRevenue === 'number', 'Sales report is missing totalRevenue');
+  assert(
+    typeof salesReport.averageDealValue === 'number',
+    'Sales report is missing averageDealValue',
+  );
+  pass('Sales report verified');
+
+  // Leads report (grouped lead statistics)
+  const leadReportRes = await client.get('/reports/leads', { headers: authHeaders });
+  assert(
+    leadReportRes.status === 200,
+    `Lead report failed: GET /reports/leads -> HTTP ${leadReportRes.status} - ${JSON.stringify(
+      leadReportRes.data,
+    )}`,
+  );
+  const leadReport = (leadReportRes.data?.data ?? {}) as {
+    total?: unknown;
+    byStatus?: Array<{ status?: unknown; count?: unknown }>;
+  };
+  const leadBuckets = Array.isArray(leadReport.byStatus) ? leadReport.byStatus : [];
+  assert(leadBuckets.length > 0, 'Lead report did not return grouped lead statistics');
+  assert(
+    leadBuckets.every(
+      (bucket) => typeof bucket.status === 'string' && typeof bucket.count === 'number',
+    ),
+    'Lead report status buckets are malformed',
+  );
+  pass('Lead report verified');
+
+  // Agents report (per-agent performance)
+  const agentReportRes = await client.get('/reports/agents', { headers: authHeaders });
+  assert(
+    agentReportRes.status === 200,
+    `Agent report failed: GET /reports/agents -> HTTP ${agentReportRes.status} - ${JSON.stringify(
+      agentReportRes.data,
+    )}`,
+  );
+  const agentReport = (agentReportRes.data?.data ?? []) as Array<{
+    totalLeads?: unknown;
+    totalVisits?: unknown;
+    wonDeals?: unknown;
+    assignedProperties?: unknown;
+  }>;
+  assert(
+    Array.isArray(agentReport) && agentReport.length > 0,
+    'Agent report did not return any agent statistics',
+  );
+  const firstAgent = agentReport[0];
+  assert(
+    typeof firstAgent.totalLeads === 'number' &&
+      typeof firstAgent.totalVisits === 'number' &&
+      typeof firstAgent.wonDeals === 'number' &&
+      typeof firstAgent.assignedProperties === 'number',
+    'Agent report row is missing numeric statistics',
+  );
+  pass('Agent performance report verified');
+
+  // Properties report (portfolio analytics)
+  const propertyReportRes = await client.get('/reports/properties', { headers: authHeaders });
+  assert(
+    propertyReportRes.status === 200,
+    `Property report failed: GET /reports/properties -> HTTP ${
+      propertyReportRes.status
+    } - ${JSON.stringify(propertyReportRes.data)}`,
+  );
+  const propertyReport = (propertyReportRes.data?.data ?? {}) as {
+    total?: unknown;
+    available?: unknown;
+    sold?: unknown;
+    rented?: unknown;
+    averagePrice?: unknown;
+    averageArea?: unknown;
+  };
+  assert(
+    typeof propertyReport.total === 'number' &&
+      typeof propertyReport.available === 'number' &&
+      typeof propertyReport.sold === 'number' &&
+      typeof propertyReport.rented === 'number' &&
+      typeof propertyReport.averagePrice === 'number' &&
+      typeof propertyReport.averageArea === 'number',
+    'Property report did not return the expected analytics',
+  );
+  pass('Property report verified');
+
+  // Visits report (visit analytics)
+  const visitReportRes = await client.get('/reports/visits', { headers: authHeaders });
+  assert(
+    visitReportRes.status === 200,
+    `Visit report failed: GET /reports/visits -> HTTP ${visitReportRes.status} - ${JSON.stringify(
+      visitReportRes.data,
+    )}`,
+  );
+  const visitReport = (visitReportRes.data?.data ?? {}) as {
+    scheduled?: unknown;
+    completed?: unknown;
+    cancelled?: unknown;
+    total?: unknown;
+    completionRate?: unknown;
+  };
+  assert(
+    typeof visitReport.scheduled === 'number' &&
+      typeof visitReport.completed === 'number' &&
+      typeof visitReport.cancelled === 'number' &&
+      typeof visitReport.total === 'number' &&
+      typeof visitReport.completionRate === 'number',
+    'Visit report did not return the expected analytics',
+  );
+  pass('Visit report verified');
+
+  // CSV export (raw text/csv, not the JSON envelope)
+  const csvRes = await client.get('/reports/export/csv', { headers: authHeaders });
+  assert(
+    csvRes.status === 200,
+    `CSV export failed: GET /reports/export/csv -> HTTP ${csvRes.status} - ${JSON.stringify(
+      csvRes.data,
+    )}`,
+  );
+  const csvContentType = String(csvRes.headers['content-type'] ?? '');
+  assert(
+    csvContentType.includes('text/csv'),
+    `CSV export Content-Type is not text/csv (got: ${csvContentType})`,
+  );
+  const csvBody = typeof csvRes.data === 'string' ? csvRes.data : String(csvRes.data ?? '');
+  assert(csvBody.trim().length > 0, 'CSV export response body is empty');
+  pass('CSV export verified');
+
+  // ---------------------------------------------------------------------------
+  // Common infrastructure regression tests. These exercise the shared response
+  // envelope, pagination/sorting/search helpers, validation, the auth guards and
+  // the custom exceptions provided by the common layer. They run while the
+  // created business data still exists (before the cleanup deletes below).
+  // ---------------------------------------------------------------------------
+
+  // 1. Standard response format: { success, message, data, meta }
+  const envelopeRes = await client.get(`/properties/${propertyId}`, { headers: authHeaders });
+  assert(
+    envelopeRes.status === 200,
+    `Response format check failed: GET /properties/${propertyId} -> HTTP ${envelopeRes.status}`,
+  );
+  const envelope = (envelopeRes.data ?? {}) as Record<string, unknown>;
+  assert(envelope.success === true, 'Response envelope is missing "success: true"');
+  assert(typeof envelope.message === 'string', 'Response envelope is missing a string "message"');
+  assert('data' in envelope, 'Response envelope is missing "data"');
+  assert('meta' in envelope, 'Response envelope is missing "meta"');
+  assert(envelope.meta === null, 'A non-list response should carry meta === null');
+  pass('Response format verified');
+
+  // 2. Pagination metadata: page, limit, total, totalPages
+  const pagRes = await client.get('/properties?page=1&limit=2', { headers: authHeaders });
+  assert(pagRes.status === 200, `Pagination check failed: HTTP ${pagRes.status}`);
+  const pagItems = pagRes.data?.data;
+  const pagMeta = pagRes.data?.meta as ListMeta | undefined;
+  assert(Array.isArray(pagItems), 'Paginated "data" should be an array');
+  assert(Boolean(pagMeta) && typeof pagMeta === 'object', 'Paginated response is missing "meta"');
+  for (const key of ['page', 'limit', 'total', 'totalPages'] as const) {
+    assert(typeof pagMeta?.[key] === 'number', `Pagination meta is missing numeric "${key}"`);
+  }
+  assert(pagMeta?.page === 1, `Pagination meta.page should be 1 (got ${pagMeta?.page})`);
+  assert(pagMeta?.limit === 2, `Pagination meta.limit should be 2 (got ${pagMeta?.limit})`);
+  assert((pagItems as unknown[]).length <= 2, 'Pagination returned more items than the limit');
+  pass('Pagination verified');
+
+  // 3. Sorting: ascending and descending order
+  const ascRes = await client.get('/properties?sortBy=price&sortOrder=asc&limit=50', {
+    headers: authHeaders,
+  });
+  const descRes = await client.get('/properties?sortBy=price&sortOrder=desc&limit=50', {
+    headers: authHeaders,
+  });
+  assert(
+    ascRes.status === 200 && descRes.status === 200,
+    'Sorting requests did not both return HTTP 200',
+  );
+  const ascSorted = ((ascRes.data?.data ?? []) as Array<{ price: unknown }>).map((p) =>
+    Number(p.price),
+  );
+  const descSorted = ((descRes.data?.data ?? []) as Array<{ price: unknown }>).map((p) =>
+    Number(p.price),
+  );
+  assert(
+    ascSorted.every((v, i) => i === 0 || ascSorted[i - 1] <= v),
+    'Ascending sort did not return non-decreasing prices',
+  );
+  assert(
+    descSorted.every((v, i) => i === 0 || descSorted[i - 1] >= v),
+    'Descending sort did not return non-increasing prices',
+  );
+  pass('Sorting verified');
+
+  // 4. Search returns matching records
+  const searchRes = await client.get('/properties?search=Modern&limit=50', {
+    headers: authHeaders,
+  });
+  assert(searchRes.status === 200, `Search check failed: HTTP ${searchRes.status}`);
+  const searchItems = (searchRes.data?.data ?? []) as Array<{
+    title?: string;
+    description?: string;
+    location?: string;
+  }>;
+  assert(searchItems.length > 0, 'Search for "Modern" returned no records');
+  assert(
+    searchItems.every((p) =>
+      [p.title, p.description, p.location].some((field) =>
+        String(field ?? '')
+          .toLowerCase()
+          .includes('modern'),
+      ),
+    ),
+    'Search returned a record that does not match the search term',
+  );
+  pass('Search verified');
+
+  // 5. Validation: an invalid payload must yield HTTP 400 with a validation message
+  const invalidRes = await client.post(
+    '/properties',
+    { title: '', price: 'not-a-number', bedrooms: -1, propertyType: 'INVALID', status: 'NOPE' },
+    { headers: authHeaders },
+  );
+  assert(
+    invalidRes.status === 400,
+    `Validation check failed: expected 400, got ${invalidRes.status} - ${JSON.stringify(
+      invalidRes.data,
+    )}`,
+  );
+  assert(invalidRes.data?.success === false, 'Validation error envelope should have success: false');
+  assert(
+    typeof invalidRes.data?.message === 'string' && invalidRes.data.message.length > 0,
+    'Validation error is missing a message',
+  );
+  assert(
+    Array.isArray(invalidRes.data?.errors) && invalidRes.data.errors.length > 0,
+    'Validation error did not include a non-empty errors array',
+  );
+  pass('Validation verified');
+
+  // 6. Unauthorized access: a protected endpoint without a JWT must return 401
+  const noAuthRes = await client.get('/properties');
+  assert(
+    noAuthRes.status === 401,
+    `Unauthorized check failed: expected 401, got ${noAuthRes.status}`,
+  );
+  pass('Unauthorized access verified');
+
+  // 7. Invalid JWT: a malformed token must return 401
+  const badJwtRes = await client.get('/properties', {
+    headers: { Authorization: 'Bearer invalid.token.value' },
+  });
+  assert(
+    badJwtRes.status === 401,
+    `Invalid JWT check failed: expected 401, got ${badJwtRes.status}`,
+  );
+  pass('Invalid JWT verified');
+
+  // 8. Not Found: the custom ResourceNotFoundException envelope
+  const missingId = '00000000-0000-4000-8000-000000000000';
+  const notFoundRes = await client.get(`/properties/${missingId}`, { headers: authHeaders });
+  assert(
+    notFoundRes.status === 404,
+    `Not Found check failed: expected 404, got ${notFoundRes.status}`,
+  );
+  assert(notFoundRes.data?.success === false, 'Not Found envelope should have success: false');
+  assert(
+    typeof notFoundRes.data?.message === 'string' &&
+      notFoundRes.data.message.toLowerCase().includes('not found'),
+    `Not Found response is not from the custom exception (got: ${notFoundRes.data?.message})`,
+  );
+  pass('Custom exception verified');
+
+  // 9. Environment validation: the app must fail fast when a required env var is missing
+  verifyEnvValidation();
+  pass('Environment validation verified');
 
   // 25. Delete visit
   const deleteVisitRes = await client.delete(`/visits/${visitId}`, { headers: authHeaders });
