@@ -7,6 +7,7 @@ import { ClientsModule } from './clients/clients.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { LeadsModule } from './leads/leads.module';
+import { MediaModule } from './media/media.module';
 import { ReportsModule } from './reports/reports.module';
 import { PropertiesModule } from './properties/properties.module';
 import { UsersModule } from './users/users.module';
@@ -34,6 +35,7 @@ import { THROTTLE_TTL_MS, THROTTLE_DEFAULT_LIMIT } from './common/constants/secu
     DashboardModule,
     ReportsModule,
     HealthModule,
+    MediaModule,
   ],
   providers: [
     // Enforces the throttler on every route unless overridden/skipped.

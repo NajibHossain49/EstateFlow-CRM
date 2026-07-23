@@ -10,5 +10,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["api-test.ts"]
+  "include": ["api-test.ts", "media.test.ts"]
 }

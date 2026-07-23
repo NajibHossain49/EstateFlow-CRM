@@ -20,6 +20,7 @@ model User {
   leads      Lead[]
   visits     Visit[]
   activities Activity[]
+  media      Media[]
 
   @@map("users")
 }
@@ -120,6 +121,33 @@ model Activity {
   @@index([leadId])
   @@index([createdBy])
   @@map("activities")
+}
+
+model Media {
+  id           String           @id @default(uuid()) @db.Uuid
+  url          String
+  publicId     String           @unique
+  originalName String
+  mimeType     String
+  size         Int
+  width        Int?
+  height       Int?
+  // Polymorphic association: entityType + entityId link media to any resource
+  // (currently PROPERTY) without a hard FK, keeping the module extensible.
+  entityType   MediaEntityType?
+  entityId     String?          @db.Uuid
+  order        Int              @default(0)
+  createdBy    String           @db.Uuid
+  creator      User             @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt    DateTime         @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdBy])
+  @@map("media")
+}
+
+enum MediaEntityType {
+  PROPERTY
 }
 
 enum Role {

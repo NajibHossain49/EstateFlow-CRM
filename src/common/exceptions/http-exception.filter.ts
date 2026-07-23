@@ -49,6 +49,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const mapped = this.mapPrismaError(exception);
       status = mapped.status;
       message = mapped.message;
+    } else if (this.isMulterError(exception)) {
+      const mapped = this.mapMulterError(exception);
+      status = mapped.status;
+      message = mapped.message;
     } else if (exception instanceof Error) {
       message = exception.message;
     }
@@ -67,6 +71,33 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
 
     response.status(status).json(body);
+  }
+
+  /** Multer signals upload problems via an Error subclass named "MulterError". */
+  private isMulterError(exception: unknown): exception is Error & { code?: string } {
+    return exception instanceof Error && exception.name === 'MulterError';
+  }
+
+  private mapMulterError(error: Error & { code?: string }): { status: number; message: string } {
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return {
+          status: HttpStatus.PAYLOAD_TOO_LARGE,
+          message: 'File too large (maximum 10 MB per file)',
+        };
+      case 'LIMIT_FILE_COUNT':
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          message: 'Too many files (maximum 10 per upload)',
+        };
+      case 'LIMIT_UNEXPECTED_FILE':
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          message: 'Unexpected file field',
+        };
+      default:
+        return { status: HttpStatus.BAD_REQUEST, message: error.message };
+    }
   }
 
   private mapPrismaError(error: Prisma.PrismaClientKnownRequestError): {

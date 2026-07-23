@@ -18,7 +18,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "test:api": "npm --prefix scripts/api-test run test:api"
+    "test:api": "npm --prefix scripts/api-test run test:api",
+    "test:media": "npm --prefix scripts/api-test run test:media"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -36,6 +37,7 @@
     "bcrypt": "^5.1.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "cloudinary": "^2.10.0",
     "compression": "^1.8.1",
     "helmet": "^8.3.0",
     "passport": "^0.7.0",
@@ -50,6 +52,7 @@
     "@types/bcrypt": "^5.0.2",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
     "eslint": "^9.18.0",
