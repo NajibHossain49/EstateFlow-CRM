@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ActivitiesModule } from './activities/activities.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientsModule } from './clients/clients.module';
 import { LeadsModule } from './leads/leads.module';
@@ -24,6 +25,7 @@ import { validateEnv } from './config/env.validation';
     ClientsModule,
     LeadsModule,
     VisitsModule,
+    ActivitiesModule,
   ],
 })
 export class AppModule {}

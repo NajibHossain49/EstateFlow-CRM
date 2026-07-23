@@ -4,8 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, Visit } from '@prisma/client';
+import { ActivityType, Prisma, Role, Visit, VisitStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { CreateVisitDto } from '../dto/create-visit.dto';
 import { QueryVisitsDto } from '../dto/query-visits.dto';
@@ -29,28 +30,54 @@ export interface PaginatedVisits {
 
 @Injectable()
 export class VisitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activities: ActivitiesService,
+  ) {}
 
   /**
    * Creates a visit for the current agent. agentId is always derived from the
    * authenticated user and never accepted from the client. The referenced
-   * client and property must exist.
+   * client and property must exist. Records a VISIT_CREATED activity (and a
+   * VISIT_COMPLETED activity when created already completed).
    */
   async create(dto: CreateVisitDto, userId: string): Promise<Visit> {
     await this.ensureClientExists(dto.clientId);
     await this.ensurePropertyExists(dto.propertyId);
+    if (dto.leadId) {
+      await this.ensureLeadExists(dto.leadId);
+    }
 
-    return this.prisma.visit.create({
+    const visit = await this.prisma.visit.create({
       data: {
         clientId: dto.clientId,
         propertyId: dto.propertyId,
         agentId: userId,
+        leadId: dto.leadId,
         visitDate: new Date(dto.visitDate),
         status: dto.status,
         notes: dto.notes,
       },
       include: visitInclude,
     });
+
+    await this.activities.record({
+      type: ActivityType.VISIT_CREATED,
+      description: 'Visit created',
+      createdBy: userId,
+      leadId: visit.leadId,
+    });
+
+    if (visit.status === VisitStatus.COMPLETED) {
+      await this.activities.record({
+        type: ActivityType.VISIT_COMPLETED,
+        description: 'Visit completed',
+        createdBy: userId,
+        leadId: visit.leadId,
+      });
+    }
+
+    return visit;
   }
 
   /**
@@ -102,7 +129,7 @@ export class VisitsService {
   }
 
   async update(id: string, dto: UpdateVisitDto, user: AuthenticatedUser): Promise<Visit> {
-    await this.findOne(id, user);
+    const existing = await this.findOne(id, user);
 
     if (dto.clientId) {
       await this.ensureClientExists(dto.clientId);
@@ -111,7 +138,7 @@ export class VisitsService {
       await this.ensurePropertyExists(dto.propertyId);
     }
 
-    return this.prisma.visit.update({
+    const updated = await this.prisma.visit.update({
       where: { id },
       data: {
         clientId: dto.clientId,
@@ -122,6 +149,20 @@ export class VisitsService {
       },
       include: visitInclude,
     });
+
+    // Record completion only on the transition into COMPLETED.
+    const justCompleted =
+      updated.status === VisitStatus.COMPLETED && existing.status !== VisitStatus.COMPLETED;
+    if (justCompleted) {
+      await this.activities.record({
+        type: ActivityType.VISIT_COMPLETED,
+        description: 'Visit completed',
+        createdBy: user.id,
+        leadId: updated.leadId,
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: string, user: AuthenticatedUser): Promise<Visit> {
@@ -150,6 +191,16 @@ export class VisitsService {
     });
     if (!property) {
       throw new BadRequestException(`Property with id ${propertyId} does not exist`);
+    }
+  }
+
+  private async ensureLeadExists(leadId: string): Promise<void> {
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: leadId },
+      select: { id: true },
+    });
+    if (!lead) {
+      throw new BadRequestException(`Lead with id ${leadId} does not exist`);
     }
   }
 

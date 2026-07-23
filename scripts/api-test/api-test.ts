@@ -3,8 +3,8 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 /**
  * Automated API smoke test for the EstateFlow CRM backend.
  *
- * Runs the full happy-path flow (register -> login -> properties -> clients -> leads -> visits)
- * against a running instance and exits non-zero if any step fails.
+ * Runs the full happy-path flow (register -> login -> properties -> clients -> leads ->
+ * visits -> activity timeline) against a running instance and exits non-zero if any step fails.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
  * The NestJS app is served under the global "/api" prefix, which is appended here.
@@ -188,6 +188,27 @@ async function run(): Promise<void> {
   assert(Boolean(leadId), 'Create lead response did not contain lead data with an id');
   pass('Lead created');
 
+  // 8a. Verify a LEAD_CREATED activity was recorded automatically.
+  // The timeline endpoint returns a plain array in `data`, newest first.
+  const leadCreatedActivityRes = await client.get(`/leads/${leadId}/activities`, {
+    headers: authHeaders,
+  });
+  assert(
+    leadCreatedActivityRes.status === 200,
+    `Get lead activities failed: GET /leads/${leadId}/activities -> HTTP ${
+      leadCreatedActivityRes.status
+    } - ${JSON.stringify(leadCreatedActivityRes.data)}`,
+  );
+  const leadCreatedActivities: Array<{ type: string; createdAt: string }> =
+    leadCreatedActivityRes.data?.data ?? [];
+  assert(Array.isArray(leadCreatedActivities), 'Lead activities response data is not an array');
+  assert(leadCreatedActivities.length >= 1, 'Expected at least one activity after lead creation');
+  assert(
+    leadCreatedActivities.some((a) => a.type === 'LEAD_CREATED'),
+    'LEAD_CREATED activity was not found in the lead timeline after creating the lead',
+  );
+  pass('Lead activity created successfully');
+
   // 9. Get all leads and verify the created one is present.
   // The list endpoint is paginated: data = { items: [...], meta: {...} }.
   const listLeadRes = await client.get('/leads', { headers: authHeaders });
@@ -237,6 +258,24 @@ async function run(): Promise<void> {
   );
   pass('Lead status updated');
 
+  // 11a. Verify a STATUS_CHANGED activity was recorded for the status update.
+  const statusActivityRes = await client.get(`/leads/${leadId}/activities`, {
+    headers: authHeaders,
+  });
+  assert(
+    statusActivityRes.status === 200,
+    `Get lead activities failed: GET /leads/${leadId}/activities -> HTTP ${
+      statusActivityRes.status
+    } - ${JSON.stringify(statusActivityRes.data)}`,
+  );
+  const statusActivities: Array<{ type: string; createdAt: string }> =
+    statusActivityRes.data?.data ?? [];
+  assert(
+    statusActivities.some((a) => a.type === 'STATUS_CHANGED'),
+    'STATUS_CHANGED activity was not found in the lead timeline after updating the status',
+  );
+  pass('Lead status activity verified');
+
   // 12. Filter leads by status
   const filterLeadRes = await client.get('/leads?status=INTERESTED', { headers: authHeaders });
   assert(
@@ -258,20 +297,12 @@ async function run(): Promise<void> {
   );
   pass('Lead filtering successful');
 
-  // 13. Delete lead
-  const deleteLeadRes = await client.delete(`/leads/${leadId}`, { headers: authHeaders });
-  assert(
-    deleteLeadRes.status === 200 || deleteLeadRes.status === 204,
-    `Delete lead failed: DELETE /leads/${leadId} -> HTTP ${deleteLeadRes.status} - ${JSON.stringify(
-      deleteLeadRes.data,
-    )}`,
-  );
-  pass('Lead deleted');
-
-  // 14. Create visit (reuses the property and client created earlier)
+  // 14. Create visit (reuses the property, client and lead created earlier).
+  // Passing leadId links the visit to the lead so its activities appear on the
+  // lead timeline. The lead is deleted later, after the activity checks.
   const createVisitRes = await client.post(
     '/visits',
-    { clientId, propertyId, ...testVisit },
+    { clientId, propertyId, leadId, ...testVisit },
     { headers: authHeaders },
   );
   assert(
@@ -283,6 +314,35 @@ async function run(): Promise<void> {
   const visitId: string | undefined = createVisitRes.data?.data?.id;
   assert(Boolean(visitId), 'Create visit response did not contain visit data with an id');
   pass('Visit created');
+
+  // 14a. Verify a VISIT_CREATED activity was recorded on the lead timeline.
+  const visitActivityRes = await client.get(`/leads/${leadId}/activities`, {
+    headers: authHeaders,
+  });
+  assert(
+    visitActivityRes.status === 200,
+    `Get lead activities failed: GET /leads/${leadId}/activities -> HTTP ${
+      visitActivityRes.status
+    } - ${JSON.stringify(visitActivityRes.data)}`,
+  );
+  const visitActivities: Array<{ type: string; createdAt: string }> =
+    visitActivityRes.data?.data ?? [];
+  assert(Array.isArray(visitActivities), 'Lead activities response data is not an array');
+  assert(
+    visitActivities.some((a) => a.type === 'VISIT_CREATED'),
+    'VISIT_CREATED activity was not found in the lead timeline after creating the visit',
+  );
+  pass('Visit activity verified');
+
+  // 14b. Verify activities are returned latest-first (createdAt non-increasing).
+  const timestamps = visitActivities.map((a) => new Date(a.createdAt).getTime());
+  const isDescending = timestamps.every((t, i) => i === 0 || timestamps[i - 1] >= t);
+  assert(isDescending, 'Activities are not ordered latest-first by createdAt');
+  assert(
+    timestamps.length === 0 || timestamps[0] === Math.max(...timestamps),
+    'activities[0] does not hold the latest createdAt value',
+  );
+  pass('Activity ordering verified');
 
   // 15. Get all visits and verify the created one is present (paginated: data.items).
   const listVisitRes = await client.get('/visits', { headers: authHeaders });
@@ -362,6 +422,16 @@ async function run(): Promise<void> {
     )}`,
   );
   pass('Visit deleted');
+
+  // 20. Delete lead (done last so it survives the activity-timeline checks above)
+  const deleteLeadRes = await client.delete(`/leads/${leadId}`, { headers: authHeaders });
+  assert(
+    deleteLeadRes.status === 200 || deleteLeadRes.status === 204,
+    `Delete lead failed: DELETE /leads/${leadId} -> HTTP ${deleteLeadRes.status} - ${JSON.stringify(
+      deleteLeadRes.data,
+    )}`,
+  );
+  pass('Lead deleted');
 
   console.log('\n\x1b[32mAll API tests passed!\x1b[0m');
 }

@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Lead, Prisma, Role } from '@prisma/client';
+import { ActivityType, Lead, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivitiesService } from '../../activities/services/activities.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { CreateLeadDto } from '../dto/create-lead.dto';
 import { QueryLeadsDto } from '../dto/query-leads.dto';
@@ -22,17 +23,30 @@ export interface PaginatedLeads {
 
 @Injectable()
 export class LeadsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activities: ActivitiesService,
+  ) {}
 
   /**
    * Creates a lead assigned to the current user by default. assignedAgentId is
    * always derived from the authenticated user and never accepted from the client.
+   * Records a LEAD_CREATED activity on the lead timeline.
    */
-  create(dto: CreateLeadDto, userId: string): Promise<Lead> {
-    return this.prisma.lead.create({
+  async create(dto: CreateLeadDto, userId: string): Promise<Lead> {
+    const lead = await this.prisma.lead.create({
       data: { ...dto, assignedAgentId: userId },
       include: leadInclude,
     });
+
+    await this.activities.record({
+      type: ActivityType.LEAD_CREATED,
+      description: 'Lead created',
+      createdBy: userId,
+      leadId: lead.id,
+    });
+
+    return lead;
   }
 
   /**
@@ -84,13 +98,32 @@ export class LeadsService {
   }
 
   async update(id: string, dto: UpdateLeadDto, user: AuthenticatedUser): Promise<Lead> {
-    await this.findOne(id, user);
+    const existing = await this.findOne(id, user);
 
-    return this.prisma.lead.update({
+    const updated = await this.prisma.lead.update({
       where: { id },
       data: dto,
       include: leadInclude,
     });
+
+    const statusChanged = dto.status !== undefined && dto.status !== existing.status;
+    if (statusChanged) {
+      await this.activities.record({
+        type: ActivityType.STATUS_CHANGED,
+        description: `Lead status changed from ${existing.status} to ${updated.status}`,
+        createdBy: user.id,
+        leadId: id,
+      });
+    } else {
+      await this.activities.record({
+        type: ActivityType.LEAD_UPDATED,
+        description: 'Lead updated',
+        createdBy: user.id,
+        leadId: id,
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: string, user: AuthenticatedUser): Promise<Lead> {

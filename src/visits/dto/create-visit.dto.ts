@@ -14,6 +14,15 @@ export class CreateVisitDto {
   propertyId!: string;
 
   @ApiProperty({
+    format: 'uuid',
+    required: false,
+    description: 'Optional lead this visit belongs to (adds visit activities to the lead timeline)',
+  })
+  @IsOptional()
+  @IsUUID()
+  leadId?: string;
+
+  @ApiProperty({
     example: '2026-08-01T14:30:00.000Z',
     description: 'Scheduled date/time of the visit (ISO 8601)',
   })

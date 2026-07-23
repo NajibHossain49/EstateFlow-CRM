@@ -19,6 +19,7 @@ model User {
   properties Property[]
   leads      Lead[]
   visits     Visit[]
+  activities Activity[]
 
   @@map("users")
 }
@@ -74,6 +75,9 @@ model Lead {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
+  activities      Activity[]
+  visits          Visit[]
+
   @@index([assignedAgentId])
   @@index([status])
   @@map("leads")
@@ -87,6 +91,8 @@ model Visit {
   property   Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   agentId    String      @db.Uuid
   agent      User        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  leadId     String?     @db.Uuid
+  lead       Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
   visitDate  DateTime
   status     VisitStatus @default(SCHEDULED)
   notes      String?
@@ -96,8 +102,24 @@ model Visit {
   @@index([clientId])
   @@index([propertyId])
   @@index([agentId])
+  @@index([leadId])
   @@index([status])
   @@map("visits")
+}
+
+model Activity {
+  id          String       @id @default(uuid()) @db.Uuid
+  type        ActivityType
+  description String
+  leadId      String?      @db.Uuid
+  lead        Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy   String       @db.Uuid
+  creator     User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+
+  @@index([leadId])
+  @@index([createdBy])
+  @@map("activities")
 }
 
 enum Role {
@@ -132,4 +154,13 @@ enum VisitStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
+}
+
+enum ActivityType {
+  LEAD_CREATED
+  LEAD_UPDATED
+  STATUS_CHANGED
+  VISIT_CREATED
+  VISIT_COMPLETED
+  NOTE_ADDED
 }
