@@ -17,8 +17,9 @@ const BASE_URL = `${API_URL.replace(/\/+$/, '')}/api`;
 
 const testUser = {
   name: 'Test Admin',
-  email: 'testadmin@example.com',
-  password: 'password123',
+  // Strong password required by the hardened RegisterDto (upper/lower/number/special).
+  email: 'security.admin@example.com',
+  password: 'Password123!',
 };
 
 const testProperty = {
@@ -189,7 +190,7 @@ function verifyEnvValidation(): void {
       NODE_ENV: 'test',
       PORT: 3000,
       DATABASE_URL: 'postgresql://user:pass@localhost:5432/estateflow',
-      JWT_SECRET: 'test-secret',
+      JWT_SECRET: 'test-secret-value-0123456789',
       JWT_EXPIRES_IN: '1d',
     });
   } catch {
@@ -1275,6 +1276,77 @@ async function run(): Promise<void> {
     )}`,
   );
   pass('Lead deleted');
+
+  // ---------------------------------------------------------------------------
+  // Security hardening verification: health endpoint, Helmet headers and the
+  // per-route rate limiter. Run last so the rate-limit probe cannot interfere
+  // with the earlier login/register steps.
+  // ---------------------------------------------------------------------------
+
+  // Health check: public endpoint reporting status, DB connectivity, uptime, version.
+  const healthRes = await client.get('/health');
+  assert(healthRes.status === 200, `Health check failed: HTTP ${healthRes.status}`);
+  const health = (healthRes.data?.data ?? {}) as {
+    status?: unknown;
+    database?: unknown;
+    uptime?: unknown;
+    version?: unknown;
+  };
+  assert(health.status === 'ok', `Health status is not "ok" (got: ${String(health.status)})`);
+  assert(health.database === 'up', `Health database is not "up" (got: ${String(health.database)})`);
+  assert(typeof health.uptime === 'number', 'Health response is missing a numeric uptime');
+  assert(
+    typeof health.version === 'string' && health.version.length > 0,
+    'Health response is missing a version',
+  );
+  pass('Health endpoint verified');
+
+  // Helmet: security headers should be present on responses.
+  const helmetHeaders = healthRes.headers as Record<string, string | undefined>;
+  assert(
+    helmetHeaders['x-content-type-options'] === 'nosniff',
+    'Helmet header "x-content-type-options: nosniff" is missing',
+  );
+  assert(
+    helmetHeaders['x-powered-by'] === undefined,
+    'Helmet should remove the "x-powered-by" header',
+  );
+  pass('Security headers verified');
+
+  // Password validation: the hardened RegisterDto rejects weak passwords with 400.
+  // Register is rate-limited to 3/min (one real register was already used at
+  // startup), so we probe a representative subset: "password" lacks an
+  // uppercase/number/special char and "12345678" lacks letters and a special char.
+  const weakPasswords = ['password', '12345678'];
+  for (const weak of weakPasswords) {
+    const weakRes = await client.post('/auth/register', {
+      name: 'Weak Password User',
+      email: `weak.${weak}@example.com`,
+      password: weak,
+    });
+    assert(
+      weakRes.status === 400,
+      `Password validation failed for "${weak}": expected 400, got ${weakRes.status} - ${JSON.stringify(
+        weakRes.data,
+      )}`,
+    );
+  }
+  pass('Password validation verified');
+
+  // Rate limiting: exceeding the login limit (5/min) must yield HTTP 429.
+  const loginAttempts: number[] = [];
+  for (let i = 0; i < 8; i += 1) {
+    const attempt = await client.post('/auth/login', {
+      email: testUser.email,
+      password: 'wrong-password',
+    });
+    loginAttempts.push(attempt.status);
+  }
+  assert(
+    loginAttempts.includes(429),
+    `Rate limiting did not trigger a 429 after repeated logins (statuses: ${loginAttempts.join(', ')})`,
+  );
+  pass('Rate limiting verified');
 
   console.log('\n\x1b[32mAll API tests passed!\x1b[0m');
 }
