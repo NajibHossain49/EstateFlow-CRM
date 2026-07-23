@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ActivitiesModule } from './activities/activities.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientsModule } from './clients/clients.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { LeadsModule } from './leads/leads.module';
 import { PropertiesModule } from './properties/properties.module';
 import { UsersModule } from './users/users.module';
@@ -26,6 +27,7 @@ import { validateEnv } from './config/env.validation';
     LeadsModule,
     VisitsModule,
     ActivitiesModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

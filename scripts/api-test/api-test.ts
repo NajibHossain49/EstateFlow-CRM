@@ -4,7 +4,8 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
  * Automated API smoke test for the EstateFlow CRM backend.
  *
  * Runs the full happy-path flow (register -> login -> properties -> clients -> leads ->
- * visits -> activity timeline) against a running instance and exits non-zero if any step fails.
+ * visits -> activity timeline -> dashboard analytics) against a running instance and exits
+ * non-zero if any step fails.
  *
  * Configure the target with the API_URL env var (default: http://localhost:3000).
  * The NestJS app is served under the global "/api" prefix, which is appended here.
@@ -413,7 +414,175 @@ async function run(): Promise<void> {
   );
   pass('Visit filtering successful');
 
-  // 19. Delete visit
+  // ---------------------------------------------------------------------------
+  // Dashboard Analytics. These run while all business data still exists (before
+  // the visit/lead cleanup below), so the aggregate counts are non-empty.
+  // The overview response is flat (totalProperties, totalClients, ...).
+  // ---------------------------------------------------------------------------
+
+  // 19. Dashboard overview
+  const overviewRes = await client.get('/dashboard/overview', { headers: authHeaders });
+  assert(
+    overviewRes.status === 200,
+    `Get dashboard overview failed: GET /dashboard/overview -> HTTP ${overviewRes.status} - ${JSON.stringify(
+      overviewRes.data,
+    )}`,
+  );
+  const overview: {
+    totalProperties?: number;
+    totalClients?: number;
+    totalLeads?: number;
+    scheduledVisits?: number;
+    completedVisits?: number;
+    cancelledVisits?: number;
+  } = overviewRes.data?.data ?? {};
+  assert(
+    typeof overview.totalProperties === 'number' &&
+      typeof overview.totalClients === 'number' &&
+      typeof overview.totalLeads === 'number',
+    'Dashboard overview is missing property/client/lead totals',
+  );
+  assert(
+    typeof overview.scheduledVisits === 'number' &&
+      typeof overview.completedVisits === 'number' &&
+      typeof overview.cancelledVisits === 'number',
+    'Dashboard overview is missing scheduled/completed/cancelled visit counts',
+  );
+  assert(
+    (overview.totalProperties ?? 0) >= 1,
+    `Expected at least one property in the overview (got: ${overview.totalProperties})`,
+  );
+  assert(
+    (overview.totalClients ?? 0) >= 1,
+    `Expected at least one client in the overview (got: ${overview.totalClients})`,
+  );
+  assert(
+    (overview.totalLeads ?? 0) >= 1,
+    `Expected at least one lead in the overview (got: ${overview.totalLeads})`,
+  );
+  pass('Dashboard overview verified');
+
+  // 20. Recent activities
+  const recentActivitiesRes = await client.get('/dashboard/recent-activities', {
+    headers: authHeaders,
+  });
+  assert(
+    recentActivitiesRes.status === 200,
+    `Get recent activities failed: GET /dashboard/recent-activities -> HTTP ${
+      recentActivitiesRes.status
+    } - ${JSON.stringify(recentActivitiesRes.data)}`,
+  );
+  const recentActivities: Array<{ type: string; description: string; createdAt: string }> =
+    recentActivitiesRes.data?.data ?? [];
+  assert(Array.isArray(recentActivities), 'Recent activities response data is not an array');
+  assert(recentActivities.length > 0, 'Expected at least one recent activity');
+  const firstActivity = recentActivities[0];
+  assert(
+    typeof firstActivity.type === 'string' &&
+      typeof firstActivity.description === 'string' &&
+      typeof firstActivity.createdAt === 'string',
+    'First recent activity is missing type, description or createdAt',
+  );
+  pass('Recent activities verified');
+
+  // 21. Lead pipeline
+  const pipelineRes = await client.get('/dashboard/lead-pipeline', { headers: authHeaders });
+  assert(
+    pipelineRes.status === 200,
+    `Get lead pipeline failed: GET /dashboard/lead-pipeline -> HTTP ${pipelineRes.status} - ${JSON.stringify(
+      pipelineRes.data,
+    )}`,
+  );
+  const pipeline: Array<{ status: string; count: number }> = pipelineRes.data?.data ?? [];
+  assert(Array.isArray(pipeline), 'Lead pipeline response data is not an array');
+  const pipelineStatuses = new Set(pipeline.map((entry) => entry.status));
+  const expectedLeadStatuses = [
+    'NEW',
+    'CONTACTED',
+    'INTERESTED',
+    'VISIT_SCHEDULED',
+    'NEGOTIATION',
+    'WON',
+    'LOST',
+  ];
+  assert(
+    expectedLeadStatuses.every((status) => pipelineStatuses.has(status)),
+    'Lead pipeline is missing one or more lead status buckets',
+  );
+  pass('Lead pipeline verified');
+
+  // 22. Property distribution
+  const distributionRes = await client.get('/dashboard/property-distribution', {
+    headers: authHeaders,
+  });
+  assert(
+    distributionRes.status === 200,
+    `Get property distribution failed: GET /dashboard/property-distribution -> HTTP ${
+      distributionRes.status
+    } - ${JSON.stringify(distributionRes.data)}`,
+  );
+  const distribution: {
+    byType?: Array<{ propertyType: string; count: number }>;
+    byStatus?: Array<{ status: string; count: number }>;
+  } = distributionRes.data?.data ?? {};
+  assert(
+    Array.isArray(distribution.byType) && Array.isArray(distribution.byStatus),
+    'Property distribution is missing byType or byStatus arrays',
+  );
+  pass('Property distribution verified');
+
+  // 23. Upcoming visits (each item must carry visitDate, client and property)
+  const upcomingVisitsRes = await client.get('/dashboard/upcoming-visits', {
+    headers: authHeaders,
+  });
+  assert(
+    upcomingVisitsRes.status === 200,
+    `Get upcoming visits failed: GET /dashboard/upcoming-visits -> HTTP ${
+      upcomingVisitsRes.status
+    } - ${JSON.stringify(upcomingVisitsRes.data)}`,
+  );
+  const upcomingVisits: Array<{ visitDate?: string; client?: unknown; property?: unknown }> =
+    upcomingVisitsRes.data?.data ?? [];
+  assert(Array.isArray(upcomingVisits), 'Upcoming visits response data is not an array');
+  assert(
+    upcomingVisits.every(
+      (visit) => Boolean(visit.visitDate) && Boolean(visit.client) && Boolean(visit.property),
+    ),
+    'An upcoming visit is missing visitDate, client or property',
+  );
+  pass('Upcoming visits verified');
+
+  // 24. Monthly summary
+  const monthlySummaryRes = await client.get('/dashboard/monthly-summary', {
+    headers: authHeaders,
+  });
+  assert(
+    monthlySummaryRes.status === 200,
+    `Get monthly summary failed: GET /dashboard/monthly-summary -> HTTP ${
+      monthlySummaryRes.status
+    } - ${JSON.stringify(monthlySummaryRes.data)}`,
+  );
+  const monthlySummary: Array<{
+    month: string;
+    newLeads: number;
+    completedVisits: number;
+    wonDeals: number;
+  }> = monthlySummaryRes.data?.data ?? [];
+  assert(Array.isArray(monthlySummary), 'Monthly summary response data is not an array');
+  assert(monthlySummary.length > 0, 'Monthly summary did not contain any monthly buckets');
+  assert(
+    monthlySummary.every(
+      (entry) =>
+        typeof entry.month === 'string' &&
+        typeof entry.newLeads === 'number' &&
+        typeof entry.completedVisits === 'number' &&
+        typeof entry.wonDeals === 'number',
+    ),
+    'A monthly summary entry is missing expected fields (month, newLeads, completedVisits, wonDeals)',
+  );
+  pass('Monthly summary verified');
+
+  // 25. Delete visit
   const deleteVisitRes = await client.delete(`/visits/${visitId}`, { headers: authHeaders });
   assert(
     deleteVisitRes.status === 200 || deleteVisitRes.status === 204,
@@ -423,7 +592,7 @@ async function run(): Promise<void> {
   );
   pass('Visit deleted');
 
-  // 20. Delete lead (done last so it survives the activity-timeline checks above)
+  // 26. Delete lead (done last so it survives the activity-timeline and dashboard checks above)
   const deleteLeadRes = await client.delete(`/leads/${leadId}`, { headers: authHeaders });
   assert(
     deleteLeadRes.status === 200 || deleteLeadRes.status === 204,
