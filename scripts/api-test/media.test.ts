@@ -6,8 +6,10 @@ import * as path from 'path';
 /**
  * Automated API test for the EstateFlow CRM Media module.
  *
- * Verifies the full image lifecycle (upload -> attach -> list -> reorder -> delete)
- * plus upload validation (invalid MIME type, oversized file, unauthorized upload).
+ * Verifies the full image lifecycle (upload -> attach -> list -> reorder ->
+ * soft-delete -> restore -> delete), ordering determinism, plus validation
+ * (invalid MIME type, oversized file) and authorization (unauthorized
+ * upload/delete/restore return 401).
  *
  * The upload/attach/reorder/delete steps require a configured Cloudinary storage
  * provider (CLOUDINARY_* env vars). When Cloudinary is not configured the backend
@@ -272,7 +274,62 @@ async function run(): Promise<void> {
     );
     pass('Media reorder verified');
 
-    // 5. Delete both images and confirm they are gone from the database.
+    // 5. Soft delete mediaOne and confirm it disappears from normal queries
+    //    while the other media stays visible.
+    const softDeleteRes = await client.delete(`/media/${mediaOne.id}`, { headers: authHeader });
+    assert(
+      softDeleteRes.status === 200 || softDeleteRes.status === 204,
+      `Soft delete media failed: DELETE /media/${mediaOne.id} -> HTTP ${softDeleteRes.status} - ${JSON.stringify(softDeleteRes.data)}`,
+    );
+    const afterSoftDeleteRes = await client.get(`/properties/${propertyId}/media`, {
+      headers: authHeader,
+    });
+    const afterSoftDelete: MediaRecord[] = afterSoftDeleteRes.data?.data ?? [];
+    assert(
+      !afterSoftDelete.some((m) => m.id === mediaOne.id),
+      'Soft-deleted media still appears in the property media list',
+    );
+    assert(
+      afterSoftDelete.some((m) => m.id === mediaTwo.id),
+      'Non-deleted media unexpectedly missing from the property media list',
+    );
+    pass('Media soft delete verified');
+
+    // 6. Restore mediaOne and confirm it reappears and deletedAt is cleared.
+    const restoreRes = await client.patch(
+      `/media/${mediaOne.id}/restore`,
+      {},
+      { headers: authHeader },
+    );
+    assert(
+      restoreRes.status === 200,
+      `Restore media failed: PATCH /media/${mediaOne.id}/restore -> HTTP ${restoreRes.status} - ${JSON.stringify(restoreRes.data)}`,
+    );
+    const restored = restoreRes.data?.data as { deletedAt?: string | null } | undefined;
+    assert(
+      restored != null && (restored.deletedAt === null || restored.deletedAt === undefined),
+      'Restore did not clear deletedAt',
+    );
+    const afterRestoreRes = await client.get(`/properties/${propertyId}/media`, {
+      headers: authHeader,
+    });
+    const afterRestore: MediaRecord[] = afterRestoreRes.data?.data ?? [];
+    assert(
+      afterRestore.some((m) => m.id === mediaOne.id),
+      'Restored media did not reappear in the property media list',
+    );
+    pass('Media restore verified');
+
+    // 7. Ordering is deterministic: the list is returned in ascending display order.
+    const orderValues = afterRestore.map((m) => m.order);
+    const ascending = [...orderValues].sort((a, b) => a - b);
+    assert(
+      orderValues.every((value, index) => value === ascending[index]),
+      'Property media is not returned in ascending display order',
+    );
+    pass('Media ordering verified');
+
+    // 8. Cleanup: soft-delete both media records.
     for (const id of [mediaOne.id, mediaTwo.id]) {
       const deleteRes = await client.delete(`/media/${id}`, { headers: authHeader });
       assert(
@@ -280,14 +337,6 @@ async function run(): Promise<void> {
         `Delete media failed: DELETE /media/${id} -> HTTP ${deleteRes.status} - ${JSON.stringify(deleteRes.data)}`,
       );
     }
-    const afterDeleteRes = await client.get(`/properties/${propertyId}/media`, {
-      headers: authHeader,
-    });
-    const remaining: MediaRecord[] = afterDeleteRes.data?.data ?? [];
-    assert(
-      !remaining.some((m) => m.id === mediaOne.id || m.id === mediaTwo.id),
-      'Deleted media still appears in the property media list',
-    );
     pass('Media deleted');
   }
 
@@ -324,6 +373,21 @@ async function run(): Promise<void> {
     `Oversized upload should be rejected but got HTTP ${oversized.status} - ${oversized.message}`,
   );
   pass('Invalid file validation verified');
+
+  // Authorization: delete/restore without a JWT must be rejected by the guard (401)
+  // before the handler runs, regardless of whether the id exists.
+  const randomId = '00000000-0000-0000-0000-000000000000';
+  const unauthorizedDelete = await client.delete(`/media/${randomId}`);
+  assert(
+    unauthorizedDelete.status === 401,
+    `Unauthorized delete should return 401 but got HTTP ${unauthorizedDelete.status}`,
+  );
+  const unauthorizedRestore = await client.patch(`/media/${randomId}/restore`, {});
+  assert(
+    unauthorizedRestore.status === 401,
+    `Unauthorized restore should return 401 but got HTTP ${unauthorizedRestore.status}`,
+  );
+  pass('Media authorization verified');
 
   // --- Cleanup: remove the property created for this run ---
   const cleanupRes = await client.delete(`/properties/${propertyId}`, { headers: authHeader });

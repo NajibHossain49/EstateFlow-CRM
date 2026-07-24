@@ -45,4 +45,13 @@ export class MediaResponseDto {
 
   @ApiProperty()
   createdAt!: Date;
+
+  @ApiProperty({ description: 'Last update timestamp (managed by Prisma @updatedAt)' })
+  updatedAt!: Date;
+
+  @ApiProperty({
+    nullable: true,
+    description: 'Soft-delete timestamp; null when the media is active',
+  })
+  deletedAt!: Date | null;
 }
