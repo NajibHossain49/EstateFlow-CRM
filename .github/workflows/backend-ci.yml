@@ -1,0 +1,142 @@
+name: Backend CI
+
+# 1. Trigger: run on pushes to main/develop and on every pull request.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Lint, Build, Migrate, Seed & API Tests
+    # 2. Setup: latest Ubuntu runner.
+    runs-on: ubuntu-latest
+
+    # 7. PostgreSQL 16 service. POSTGRES_DB auto-creates the database on boot.
+    #    The health-check gates dependent steps until Postgres accepts connections.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: estateflow
+          POSTGRES_PASSWORD: estateflow
+          POSTGRES_DB: estateflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U estateflow -d estateflow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # 8. Environment: safe dummy secrets for CI, shared by every step.
+    #    These satisfy the app's fail-fast env validation (JWT_SECRET >= 16 chars).
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgresql://estateflow:estateflow@localhost:5432/estateflow?schema=public
+      JWT_SECRET: ci-dummy-jwt-secret-0123456789
+      JWT_EXPIRES_IN: 1d
+      # Target base URL used by the API smoke tests (server is started below).
+      API_URL: http://localhost:3000
+
+    steps:
+      # Check out the repository.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Node.js 22 + npm cache. Both lockfiles are keyed so the cache stays
+      #    valid for the root app and the nested API-test package.
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            scripts/api-test/package-lock.json
+
+      # 3. Install: clean, reproducible install from the lockfile.
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Lint: fails the job on any ESLint error.
+      - name: Lint
+        run: npm run lint
+
+      # 5. Type check: compile with no output to catch type errors early.
+      - name: Type check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      # 6. Build: compiles NestJS to dist/ (also emits dist/config/env.validation.js
+      #    that the API tests exercise for env-validation coverage).
+      - name: Build
+        run: npm run build
+
+      # 9a. Prisma: generate the client against the schema.
+      - name: Prisma generate
+        run: npx prisma generate
+
+      # 9b. Prisma: apply all committed migrations to the CI database.
+      #     Fails the job if any migration fails.
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy
+
+      # 10. Seed: populate the database. Fails the job if seeding fails.
+      - name: Seed database
+        run: npm run prisma:seed
+
+      # 11a. Install the nested API-test package (its own lockfile).
+      - name: Install API test dependencies
+        run: npm ci
+        working-directory: scripts/api-test
+
+      # 11b. Start the compiled API in the background and wait until the
+      #      versioned health endpoint responds before running the tests.
+      - name: Start API server
+        run: |
+          node dist/main > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 30); do
+            if curl -sf "$API_URL/api/v1/health" > /dev/null; then
+              echo "API is up after ${i} attempt(s)."
+              exit 0
+            fi
+            echo "Waiting for API to start (attempt ${i})..."
+            sleep 2
+          done
+          echo "::error::API server did not become healthy in time."
+          cat server.log
+          exit 1
+
+      # 11c. API tests: run the full smoke suite against the live server.
+      #      Fails the job if any check fails.
+      - name: Run API tests
+        run: npm run test:api
+
+      # Stop the background server (best-effort; never fails the job).
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" 2>/dev/null || true
+          fi
+
+      # 12. Upload logs on failure for debugging.
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            server.log
+          if-no-files-found: ignore
+          retention-days: 7

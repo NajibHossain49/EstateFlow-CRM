@@ -82,7 +82,6 @@ export class PrismaService
       name: 'softDelete',
       query: {
         $allModels: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           $allOperations({ model, operation, args, query }: any) {
             if (!model || !SOFT_DELETE_MODELS.has(model as Prisma.ModelName)) {
               return query(args);

@@ -1,0 +1,817 @@
+{
+  "info": {
+    "name": "EstateFlow CRM API",
+    "_postman_id": "estateflow-crm-v1-collection",
+    "description": "Postman collection for the EstateFlow CRM backend (Backend v1.0).\n\n- Base URL: `{{baseUrl}}` (default `http://localhost:3000/api/v1`)\n- Auth: JWT Bearer. Run **Auth > Login** first — the `accessToken` is captured automatically into a collection variable and applied to every protected request.\n- Chaining: **Create** requests store the new record id (`propertyId`, `clientId`, `leadId`, `visitId`, `mediaId`) so the Get/Update/Delete/Restore requests work without editing anything.\n\nImport this file into Postman via *Import > File*.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "propertyId", "value": "", "type": "string" },
+    { "key": "clientId", "value": "", "type": "string" },
+    { "key": "leadId", "value": "", "type": "string" },
+    { "key": "visitId", "value": "", "type": "string" },
+    { "key": "mediaId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane.doe@example.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "Register a new user. Password must contain uppercase, lowercase, number and a special character (min 8 chars). Rate limited to 3/min."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.accessToken) {",
+                  "  pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "  console.log('accessToken saved to collection variables');",
+                  "}",
+                  "pm.test('Login returns an access token', function () {",
+                  "  pm.expect(res.data && res.data.accessToken).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@estateflow.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Login and receive a JWT. The token is saved to `{{accessToken}}` automatically. Rate limited to 5/min.\n\nSeeded logins (password `Password123!`): admin@estateflow.com, manager@estateflow.com, agent1@estateflow.com, agent2@estateflow.com."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users (Admin)",
+      "item": [
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/users/me", "host": ["{{baseUrl}}"], "path": ["users", "me"] },
+            "description": "Return the currently authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Create User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.id) { pm.collectionVariables.set('userId', res.data.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Agent\",\n  \"email\": \"new.agent@example.com\",\n  \"password\": \"Password123!\",\n  \"role\": \"AGENT\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] },
+            "description": "Create a user (ADMIN only). role is one of ADMIN, MANAGER, AGENT (defaults to AGENT)."
+          },
+          "response": []
+        },
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] },
+            "description": "List all users (ADMIN only)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/users/{{userId}}", "host": ["{{baseUrl}}"], "path": ["users", "{{userId}}"] },
+            "description": "Get a user by id (ADMIN only)."
+          },
+          "response": []
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Renamed Agent\",\n  \"role\": \"MANAGER\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/users/{{userId}}", "host": ["{{baseUrl}}"], "path": ["users", "{{userId}}"] },
+            "description": "Update a user (ADMIN only)."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/users/{{userId}}", "host": ["{{baseUrl}}"], "path": ["users", "{{userId}}"] },
+            "description": "Delete a user (ADMIN only)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Properties",
+      "item": [
+        {
+          "name": "Create Property",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.id) { pm.collectionVariables.set('propertyId', res.data.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Modern Downtown Apartment\",\n  \"description\": \"A bright 2-bedroom apartment with skyline views.\",\n  \"price\": 320000,\n  \"location\": \"Downtown, New York\",\n  \"bedrooms\": 2,\n  \"bathrooms\": 2,\n  \"area\": 95,\n  \"propertyType\": \"APARTMENT\",\n  \"status\": \"AVAILABLE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/properties", "host": ["{{baseUrl}}"], "path": ["properties"] },
+            "description": "Create a property. Owner is set from the authenticated user. propertyType: HOUSE | APARTMENT | LAND | COMMERCIAL. status: AVAILABLE | SOLD | RENTED."
+          },
+          "response": []
+        },
+        {
+          "name": "List Properties",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/properties?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["properties"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "apartment", "disabled": true },
+                { "key": "sortBy", "value": "price", "disabled": true },
+                { "key": "sortOrder", "value": "desc", "disabled": true },
+                { "key": "status", "value": "AVAILABLE", "disabled": true },
+                { "key": "propertyType", "value": "APARTMENT", "disabled": true },
+                { "key": "minPrice", "value": "100000", "disabled": true },
+                { "key": "maxPrice", "value": "500000", "disabled": true },
+                { "key": "minBedrooms", "value": "1", "disabled": true },
+                { "key": "maxBedrooms", "value": "4", "disabled": true },
+                { "key": "includeDeleted", "value": "true", "disabled": true }
+              ]
+            },
+            "description": "List properties with pagination, search, sorting and filtering. `includeDeleted=true` is admin-only. Returns `{ data: [...], meta: {...} }`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Property by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Property",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SOLD\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}"] },
+            "description": "Update a property (owner or admin)."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Property (soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}"] },
+            "description": "Soft delete: sets deletedAt/deletedById. The record is excluded from normal reads afterwards."
+          },
+          "response": []
+        },
+        {
+          "name": "Restore Property",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}/restore", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}", "restore"] },
+            "description": "Restore a soft-deleted property (clears deletedAt)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Clients",
+      "item": [
+        {
+          "name": "Create Client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.id) { pm.collectionVariables.set('clientId', res.data.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Carter\",\n  \"phone\": \"+1-202-555-0143\",\n  \"email\": \"john.carter@example.com\",\n  \"budget\": 400000,\n  \"preferredLocation\": \"Downtown, New York\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/clients", "host": ["{{baseUrl}}"], "path": ["clients"] },
+            "description": "Create a client. Owner is set from the authenticated user. `email` is optional."
+          },
+          "response": []
+        },
+        {
+          "name": "List Clients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clients?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["clients"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "john", "disabled": true },
+                { "key": "sortBy", "value": "budget", "disabled": true },
+                { "key": "sortOrder", "value": "desc", "disabled": true },
+                { "key": "preferredLocation", "value": "Downtown", "disabled": true },
+                { "key": "minBudget", "value": "100000", "disabled": true },
+                { "key": "maxBudget", "value": "1000000", "disabled": true },
+                { "key": "includeDeleted", "value": "true", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Client by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/clients/{{clientId}}", "host": ["{{baseUrl}}"], "path": ["clients", "{{clientId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Client",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"budget\": 550000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/clients/{{clientId}}", "host": ["{{baseUrl}}"], "path": ["clients", "{{clientId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Client (soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/clients/{{clientId}}", "host": ["{{baseUrl}}"], "path": ["clients", "{{clientId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Restore Client",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/clients/{{clientId}}/restore", "host": ["{{baseUrl}}"], "path": ["clients", "{{clientId}}", "restore"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Leads",
+      "item": [
+        {
+          "name": "Create Lead",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.id) { pm.collectionVariables.set('leadId', res.data.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Prospect\",\n  \"phone\": \"01700000000\",\n  \"email\": \"john.prospect@example.com\",\n  \"source\": \"Facebook Ad\",\n  \"status\": \"NEW\",\n  \"notes\": \"Interested in 3-bedroom apartments\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/leads", "host": ["{{baseUrl}}"], "path": ["leads"] },
+            "description": "Create a lead (assigned to the authenticated user). Also creates a LEAD_CREATED activity atomically. status: NEW | CONTACTED | INTERESTED | VISIT_SCHEDULED | NEGOTIATION | WON | LOST."
+          },
+          "response": []
+        },
+        {
+          "name": "List Leads",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leads?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "john", "disabled": true },
+                { "key": "sortBy", "value": "createdAt", "disabled": true },
+                { "key": "sortOrder", "value": "desc", "disabled": true },
+                { "key": "status", "value": "NEW", "disabled": true },
+                { "key": "source", "value": "Facebook Ad", "disabled": true },
+                { "key": "assignedAgent", "value": "", "disabled": true },
+                { "key": "createdFrom", "value": "2026-01-01", "disabled": true },
+                { "key": "createdTo", "value": "2026-12-31", "disabled": true },
+                { "key": "includeDeleted", "value": "true", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Lead by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/leads/{{leadId}}", "host": ["{{baseUrl}}"], "path": ["leads", "{{leadId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Lead",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INTERESTED\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/leads/{{leadId}}", "host": ["{{baseUrl}}"], "path": ["leads", "{{leadId}}"] },
+            "description": "Update a lead. Changing status records a STATUS_CHANGED activity; other edits record LEAD_UPDATED."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Lead (soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/leads/{{leadId}}", "host": ["{{baseUrl}}"], "path": ["leads", "{{leadId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Restore Lead",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/leads/{{leadId}}/restore", "host": ["{{baseUrl}}"], "path": ["leads", "{{leadId}}", "restore"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Activities",
+      "item": [
+        {
+          "name": "Get Lead Activity Timeline",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/leads/{{leadId}}/activities", "host": ["{{baseUrl}}"], "path": ["leads", "{{leadId}}", "activities"] },
+            "description": "Return the auto-generated activity timeline for a lead (latest first)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Visits",
+      "item": [
+        {
+          "name": "Create Visit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && res.data && res.data.id) { pm.collectionVariables.set('visitId', res.data.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientId\": \"{{clientId}}\",\n  \"propertyId\": \"{{propertyId}}\",\n  \"leadId\": \"{{leadId}}\",\n  \"visitDate\": \"2026-08-01T14:30:00.000Z\",\n  \"notes\": \"Client wants an afternoon viewing\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/visits", "host": ["{{baseUrl}}"], "path": ["visits"] },
+            "description": "Create a visit. agent is set from the authenticated user. `leadId` is optional (links visit activities to the lead timeline). status: SCHEDULED | COMPLETED | CANCELLED."
+          },
+          "response": []
+        },
+        {
+          "name": "List Visits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/visits?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["visits"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "sortBy", "value": "visitDate", "disabled": true },
+                { "key": "sortOrder", "value": "asc", "disabled": true },
+                { "key": "status", "value": "SCHEDULED", "disabled": true },
+                { "key": "agentId", "value": "", "disabled": true },
+                { "key": "clientId", "value": "{{clientId}}", "disabled": true },
+                { "key": "propertyId", "value": "{{propertyId}}", "disabled": true },
+                { "key": "fromDate", "value": "2026-01-01", "disabled": true },
+                { "key": "toDate", "value": "2026-12-31", "disabled": true },
+                { "key": "includeDeleted", "value": "true", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Visit by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/visits/{{visitId}}", "host": ["{{baseUrl}}"], "path": ["visits", "{{visitId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Visit",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"COMPLETED\",\n  \"notes\": \"Client completed the property visit\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/visits/{{visitId}}", "host": ["{{baseUrl}}"], "path": ["visits", "{{visitId}}"] },
+            "description": "Update a visit. Marking it COMPLETED records a VISIT_COMPLETED activity on the linked lead."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Visit (soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/visits/{{visitId}}", "host": ["{{baseUrl}}"], "path": ["visits", "{{visitId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Restore Visit",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/visits/{{visitId}}/restore", "host": ["{{baseUrl}}"], "path": ["visits", "{{visitId}}", "restore"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/overview", "host": ["{{baseUrl}}"], "path": ["dashboard", "overview"] },
+            "description": "Totals: properties (available/sold/rented), clients, leads (by status), visits (scheduled/completed/cancelled)."
+          },
+          "response": []
+        },
+        {
+          "name": "Recent Activities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/recent-activities", "host": ["{{baseUrl}}"], "path": ["dashboard", "recent-activities"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Upcoming Visits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/upcoming-visits", "host": ["{{baseUrl}}"], "path": ["dashboard", "upcoming-visits"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Lead Pipeline",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/lead-pipeline", "host": ["{{baseUrl}}"], "path": ["dashboard", "lead-pipeline"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Property Distribution",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/property-distribution", "host": ["{{baseUrl}}"], "path": ["dashboard", "property-distribution"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Monthly Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard/monthly-summary", "host": ["{{baseUrl}}"], "path": ["dashboard", "monthly-summary"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "Sales Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/sales",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "sales"],
+              "query": [
+                { "key": "from", "value": "2026-01-01", "disabled": true },
+                { "key": "to", "value": "2026-12-31", "disabled": true }
+              ]
+            },
+            "description": "Total deals, total revenue and average deal value. Optional `from`/`to` date range."
+          },
+          "response": []
+        },
+        {
+          "name": "Leads Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/reports/leads", "host": ["{{baseUrl}}"], "path": ["reports", "leads"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Agents Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/reports/agents", "host": ["{{baseUrl}}"], "path": ["reports", "agents"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Properties Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/reports/properties", "host": ["{{baseUrl}}"], "path": ["reports", "properties"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Visits Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/reports/visits", "host": ["{{baseUrl}}"], "path": ["reports", "visits"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Export CSV",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/reports/export/csv", "host": ["{{baseUrl}}"], "path": ["reports", "export", "csv"] },
+            "description": "Download a CSV report (Content-Type: text/csv). Use *Send and Download* in Postman to save the file."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Media",
+      "item": [
+        {
+          "name": "Upload Media",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res && Array.isArray(res.data) && res.data.length && res.data[0].id) {",
+                  "  pm.collectionVariables.set('mediaId', res.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "files", "type": "file", "src": [], "description": "Up to 10 images (jpg, jpeg, png, webp), max 10 MB each" }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/media/upload", "host": ["{{baseUrl}}"], "path": ["media", "upload"] },
+            "description": "Upload one or more images (multipart/form-data, field name `files`). Requires Cloudinary env vars to be configured. Select file(s) in the Body tab before sending."
+          },
+          "response": []
+        },
+        {
+          "name": "Attach Media to Property",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mediaIds\": [\"{{mediaId}}\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}/media", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}", "media"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Property Media",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}/media", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}", "media"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Reorder Property Media",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderedIds\": [\"{{mediaId}}\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/properties/{{propertyId}}/media/order", "host": ["{{baseUrl}}"], "path": ["properties", "{{propertyId}}", "media", "order"] },
+            "description": "orderedIds must contain exactly the media currently attached to the property, in the desired order."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Media",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/media/{{mediaId}}", "host": ["{{baseUrl}}"], "path": ["media", "{{mediaId}}"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "Liveness/readiness probe: status, database connectivity, database latency, uptime, version. Public (no JWT)."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
