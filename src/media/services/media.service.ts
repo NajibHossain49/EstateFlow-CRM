@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Media, MediaEntityType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { withDeleted } from '../../common/prisma/soft-delete';
 import { ForbiddenActionException } from '../../common/exceptions/forbidden-action.exception';
 import { ResourceNotFoundException } from '../../common/exceptions/resource-not-found.exception';
 import {
@@ -84,6 +85,7 @@ export class MediaService {
             entityType: MediaEntityType.PROPERTY,
             entityId: propertyId,
             order: currentCount + index,
+            updatedById: user.id,
           },
         }),
       ),
@@ -98,7 +100,9 @@ export class MediaService {
 
     return this.prisma.media.findMany({
       where: { entityType: MediaEntityType.PROPERTY, entityId: propertyId },
-      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+      // id is the final tiebreaker so the order is fully deterministic even when
+      // two rows share the same order/createdAt.
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
   }
 
@@ -130,14 +134,20 @@ export class MediaService {
 
     await this.prisma.$transaction(
       orderedIds.map((id, index) =>
-        this.prisma.media.update({ where: { id }, data: { order: index } }),
+        this.prisma.media.update({ where: { id }, data: { order: index, updatedById: user.id } }),
       ),
     );
 
     return this.findByProperty(propertyId);
   }
 
-  /** Deletes media from the storage provider and the database (owner or admin). */
+  /**
+   * Soft delete: the row is stamped with deletedAt / deletedById so it disappears
+   * from normal queries but can be restored. The stored asset is intentionally
+   * kept so a restore can bring the media back; permanent asset cleanup is left
+   * to a separate purge process. findOne already excludes soft-deleted rows, so
+   * deleting an already-deleted media returns 404.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<Media> {
     const media = await this.prisma.media.findFirst({ where: { id } });
     if (!media) {
@@ -145,8 +155,27 @@ export class MediaService {
     }
     this.assertCanManage(media, user);
 
-    await this.storage.delete(media.publicId);
-    return this.prisma.media.delete({ where: { id } });
+    return this.prisma.media.update({
+      where: { id },
+      data: { deletedAt: new Date(), deletedById: user.id },
+    });
+  }
+
+  /** Restores a soft-deleted media record (owner or admin). */
+  async restore(id: string, user: AuthenticatedUser): Promise<Media> {
+    const media = await this.prisma.media.findFirst(withDeleted({ where: { id } }, true));
+    if (!media) {
+      throw new ResourceNotFoundException('Media', id);
+    }
+    this.assertCanManage(media, user);
+    if (!media.deletedAt) {
+      throw new BadRequestException('Media is not deleted');
+    }
+
+    return this.prisma.media.update({
+      where: { id },
+      data: { deletedAt: null, deletedById: null, updatedById: user.id },
+    });
   }
 
   private async ensurePropertyExists(propertyId: string): Promise<void> {

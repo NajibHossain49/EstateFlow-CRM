@@ -3,6 +3,7 @@ import {
   Delete,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UploadedFiles,
   UseGuards,
@@ -10,12 +11,18 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiCreatedResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
+  ApiPayloadTooLargeResponse,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ResponseMessage } from '../../common/decorators/response-message.decorator';
@@ -53,16 +60,48 @@ export class MediaController {
       },
     },
   })
-  @ApiOkResponse({ type: MediaResponseDto, isArray: true })
+  @ApiCreatedResponse({
+    description: 'Media records created.',
+    type: MediaResponseDto,
+    isArray: true,
+  })
+  @ApiBadRequestResponse({
+    description: 'No file provided or unsupported file type (jpg, jpeg, png, webp only).',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
+  @ApiPayloadTooLargeResponse({ description: 'A file exceeds the 10 MB per-file limit.' })
   upload(@UploadedFiles() files: Express.Multer.File[], @CurrentUser('id') userId: string) {
     return this.mediaService.upload(files, userId);
   }
 
   @Delete(':id')
   @ResponseMessage('Media deleted successfully')
-  @ApiOperation({ summary: 'Delete media from storage and the database (owner or admin)' })
-  @ApiOkResponse({ type: MediaResponseDto })
+  @ApiOperation({
+    summary: 'Soft-delete media (owner or admin)',
+    description:
+      'Marks the media as deleted (sets deletedAt/deletedById) so it no longer appears in ' +
+      'normal queries but can be restored. The stored asset is retained for restore.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media id.' })
+  @ApiOkResponse({ description: 'Media soft-deleted.', type: MediaResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
+  @ApiNotFoundResponse({ description: 'Media not found (or already deleted).' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.mediaService.remove(id, user);
+  }
+
+  @Patch(':id/restore')
+  @ResponseMessage('Media restored successfully')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted media record (owner or admin)',
+    description: 'Clears deletedAt/deletedById so the media reappears in normal queries.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media id.' })
+  @ApiOkResponse({ description: 'Media restored.', type: MediaResponseDto })
+  @ApiBadRequestResponse({ description: 'Media is not deleted.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
+  @ApiNotFoundResponse({ description: 'Media not found.' })
+  restore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.mediaService.restore(id, user);
   }
 }

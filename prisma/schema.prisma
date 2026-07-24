@@ -178,6 +178,7 @@ model Media {
   createdBy    String           @db.Uuid
   creator      User             @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
   deletedAt    DateTime?
   createdById  String?          @db.Uuid
   updatedById  String?          @db.Uuid
@@ -191,6 +192,9 @@ model Media {
 
 enum MediaEntityType {
   PROPERTY
+  CLIENT
+  LEAD
+  VISIT
 }
 
 enum Role {
