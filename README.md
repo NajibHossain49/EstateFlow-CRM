@@ -6,6 +6,12 @@ agencies manage **properties**, **clients**, and **users** with role-based acces
 
 Built with a clean, modular NestJS architecture suitable for a real SaaS product.
 
+[![Backend CI](https://github.com/NajibHossain49/EstateFlow-CRM/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/NajibHossain49/EstateFlow-CRM/actions/workflows/backend-ci.yml)
+![Node.js](https://img.shields.io/badge/Node.js-22-339933?logo=node.js&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?logo=nestjs&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)
+
 ---
 
 ## Table of Contents
